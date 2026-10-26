@@ -71,17 +71,17 @@ export function MemberOffboardingModal(): JSX.Element {
                 <section className="space-y-4">
                     <h3>Publicly shared dashboards</h3>
                     <p>
-                        These dashboards were created or shared by this member. Choose which public links to disable.
-                        Links you keep will still work after they leave.
+                        These dashboards were created or shared by this member. Choose which public links to keep
+                        enabled. All other public links will be disabled when they leave.
                     </p>
                     {!isSelf && (
                         <LemonCheckbox
                             checked={
-                                keep.length === 0 ? true : keep.length === resources!.length ? false : 'indeterminate'
+                                keep.length === 0 ? false : keep.length === resources!.length ? true : 'indeterminate'
                             }
-                            onChange={() => disableAll(keep.length > 0)}
+                            onChange={() => disableAll(keep.length === resources!.length)}
                             disabled={removedLoading}
-                            label="Disable public sharing for all dashboards"
+                            label="Keep public sharing enabled for all dashboards"
                             data-attr="offboarding-disable-all-dashboards"
                         />
                     )}
@@ -110,10 +110,10 @@ export function MemberOffboardingModal(): JSX.Element {
                                           width: 144,
                                           render: (_: unknown, resource: NonNullable<typeof resources>[number]) => (
                                               <LemonCheckbox
-                                                  checked={!keep.includes(resource.id)}
-                                                  onChange={(disable) => setKeep(resource.id, !disable)}
+                                                  checked={keep.includes(resource.id)}
+                                                  onChange={(enabled) => setKeep(resource.id, enabled)}
                                                   disabled={removedLoading}
-                                                  label="Disable"
+                                                  label="Keep enabled"
                                                   data-attr="offboarding-disable-dashboard"
                                               />
                                           ),
