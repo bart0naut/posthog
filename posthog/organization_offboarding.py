@@ -8,6 +8,8 @@ from posthog.models.organization import OrganizationMembership
 from posthog.models.sharing_configuration import SharingConfiguration
 from posthog.organization_offboarding_types import OffboardingResource
 
+from products.subscriptions.backend.facade import api as subscriptions
+
 
 class OrganizationOffboarding:
     def __init__(self, membership: OrganizationMembership) -> None:
@@ -48,14 +50,17 @@ class OrganizationOffboarding:
             for configuration in configurations
             if configuration.dashboard
         }
-        return sorted(resources.values(), key=lambda resource: (resource.name, resource.id))
+        return sorted(
+            [*resources.values(), *subscriptions.list_member_offboarding_resources(self.organization_id, self.user_id)],
+            key=lambda resource: (resource.kind, resource.name, resource.id),
+        )
 
     def remove(self, keep: set[str]) -> None:
         if self.membership.level == OrganizationMembership.Level.OWNER:
             raise ValidationError("Cannot leave the organization as its owner!")
         with transaction.atomic():
             for resource in self.resources():
-                if resource.id not in keep:
+                if resource.kind == "dashboard" and resource.id not in keep:
                     dashboard_id = resource.id.rsplit(":", 1)[1]
                     configurations = SharingConfiguration.objects.filter(
                         team_id=resource.team_id, dashboard_id=dashboard_id
@@ -65,4 +70,10 @@ class OrganizationOffboarding:
                     if configuration and configuration.dashboard:
                         configuration.dashboard.is_shared = False
                         configuration.dashboard.save(update_fields=["is_shared"])
+            subscriptions.disable_member_offboarding_resources(
+                self.organization_id,
+                self.user_id,
+                keep,
+                self.membership.user.email,
+            )
             self.membership.user.leave(organization=self.membership.organization)

@@ -166,6 +166,7 @@ class OrganizationMemberGithubLoginSerializer(serializers.Serializer):
 
 class MemberOffboardingResourceKind(TextChoices):
     DASHBOARD = "dashboard", "Dashboard"
+    SUBSCRIPTION = "subscription", "Subscription"
 
 
 class MemberOffboardingResourceSerializer(serializers.Serializer):

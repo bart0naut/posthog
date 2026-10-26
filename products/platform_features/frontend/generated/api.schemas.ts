@@ -487,12 +487,14 @@ export interface MemberOffboardingRequestApi {
 
 /**
  * * `dashboard` - Dashboard
+ * * `subscription` - Subscription
  */
 export type MemberOffboardingResourceKindEnumApi =
     (typeof MemberOffboardingResourceKindEnumApi)[keyof typeof MemberOffboardingResourceKindEnumApi]
 
 export const MemberOffboardingResourceKindEnumApi = {
     Dashboard: 'dashboard',
+    Subscription: 'subscription',
 } as const
 
 export interface MemberOffboardingResourceApi {
@@ -500,7 +502,8 @@ export interface MemberOffboardingResourceApi {
     id: string
     /** The kind of public object or automated delivery.
      *
-     * * `dashboard` - Dashboard */
+     * * `dashboard` - Dashboard
+     * * `subscription` - Subscription */
     kind: MemberOffboardingResourceKindEnumApi
     /** The resource's display name. */
     name: string

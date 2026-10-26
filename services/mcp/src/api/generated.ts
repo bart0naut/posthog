@@ -71258,12 +71258,14 @@ export namespace Schemas {
 
     /**
      * * `dashboard` - Dashboard
+     * * `subscription` - Subscription
      */
     export type MemberOffboardingResourceKindEnum = typeof MemberOffboardingResourceKindEnum[keyof typeof MemberOffboardingResourceKindEnum];
 
 
     export const MemberOffboardingResourceKindEnum = {
       Dashboard: 'dashboard',
+      Subscription: 'subscription',
     } as const;
 
     export interface MemberOffboardingResource {
@@ -71271,7 +71273,8 @@ export namespace Schemas {
       id: string;
       /** The kind of public object or automated delivery.
        *
-       * * `dashboard` - Dashboard */
+       * * `dashboard` - Dashboard
+       * * `subscription` - Subscription */
       kind: MemberOffboardingResourceKindEnum;
       /** The resource's display name. */
       name: string;

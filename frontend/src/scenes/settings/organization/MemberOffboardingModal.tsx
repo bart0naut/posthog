@@ -11,12 +11,27 @@ import { userLogic } from 'scenes/userLogic'
 import { memberOffboardingLogic } from './memberOffboardingLogic'
 
 export function MemberOffboardingModal(): JSX.Element {
-    const { member, resources, resourcesLoading, loadError, keep, removedLoading } = useValues(memberOffboardingLogic)
-    const { close, loadResources, setKeep, disableAll, remove } = useActions(memberOffboardingLogic)
+    const {
+        member,
+        resources,
+        resourcesLoading,
+        loadError,
+        keep,
+        step,
+        dashboards,
+        subscriptions,
+        needsSubscriptionReview,
+        removedLoading,
+    } = useValues(memberOffboardingLogic)
+    const { close, loadResources, setKeep, disableAll, disableAllSubscriptions, next, back, remove } =
+        useActions(memberOffboardingLogic)
     const { scopedApiKeys, scopedApiKeysLoading } = useValues(membersLogic)
     const { user } = useValues(userLogic)
     const isSelf = member?.user.uuid === user?.uuid
     const hasResources = !resourcesLoading && !loadError && !!resources?.length
+    const subscriptionStep = step === 'subscriptions'
+    const items = subscriptionStep ? subscriptions : dashboards
+    const retainedCount = items.filter((resource) => keep.includes(resource.id)).length
 
     return (
         <LemonModal
@@ -37,21 +52,31 @@ export function MemberOffboardingModal(): JSX.Element {
                     >
                         Cancel
                     </LemonButton>
+                    {subscriptionStep && (
+                        <LemonButton
+                            type="secondary"
+                            onClick={back}
+                            disabledReason={removedLoading ? 'Removing member…' : undefined}
+                            data-attr="offboarding-back"
+                        >
+                            Back
+                        </LemonButton>
+                    )}
                     <LemonButton
                         type="primary"
-                        status="danger"
+                        status={needsSubscriptionReview ? undefined : 'danger'}
                         loading={removedLoading}
                         disabledReason={
                             resourcesLoading
-                                ? 'Checking public dashboards…'
+                                ? 'Checking shared resources…'
                                 : loadError || resources === null
-                                  ? 'Load the dashboard review before continuing'
+                                  ? 'Load the resource review before continuing'
                                   : undefined
                         }
-                        onClick={remove}
-                        data-attr="confirm-org-member-offboarding"
+                        onClick={needsSubscriptionReview ? next : remove}
+                        data-attr={needsSubscriptionReview ? 'offboarding-next' : 'confirm-org-member-offboarding'}
                     >
-                        {isSelf ? 'Leave' : 'Remove'}
+                        {needsSubscriptionReview ? 'Next: subscriptions' : isSelf ? 'Leave' : 'Remove'}
                     </LemonButton>
                 </>
             }
@@ -65,67 +90,116 @@ export function MemberOffboardingModal(): JSX.Element {
                 <LemonSkeleton className="h-12" />
             ) : loadError ? (
                 <LemonBanner type="error" action={{ children: 'Retry', onClick: loadResources }}>
-                    Couldn't load public dashboards. Retry before continuing.
+                    Couldn't load shared resources. Retry before continuing.
                 </LemonBanner>
             ) : hasResources ? (
                 <section className="space-y-4">
-                    <h3>Publicly shared dashboards</h3>
-                    <p>
-                        These dashboards were created or shared by this member. Choose which public links to keep
-                        enabled. All other public links will be disabled when they leave.
-                    </p>
-                    {!isSelf && (
-                        <LemonCheckbox
-                            checked={
-                                keep.length === 0 ? false : keep.length === resources!.length ? true : 'indeterminate'
-                            }
-                            onChange={() => disableAll(keep.length === resources!.length)}
-                            disabled={removedLoading}
-                            label="Keep public sharing enabled for all dashboards"
-                            data-attr="offboarding-disable-all-dashboards"
-                        />
+                    {subscriptions.length > 0 && (
+                        <div className="text-sm text-secondary">{subscriptionStep ? 'Step 2 of 2' : 'Step 1 of 2'}</div>
                     )}
-                    <LemonTable
-                        dataSource={resources ?? []}
-                        rowKey="id"
-                        pagination={resources!.length > 5 ? { pageSize: 5 } : undefined}
-                        columns={[
-                            {
-                                title: 'Dashboard',
-                                key: 'name',
-                                render: (_, resource) => (
-                                    <div className="flex flex-col min-w-0">
-                                        <span className="break-words">{resource.name}</span>
-                                        <span className="text-secondary text-xs break-words">
-                                            {resource.project_name}
-                                        </span>
-                                    </div>
-                                ),
-                            },
-                            ...(!isSelf
-                                ? [
-                                      {
-                                          title: 'Public sharing',
-                                          key: 'disable',
-                                          width: 144,
-                                          render: (_: unknown, resource: NonNullable<typeof resources>[number]) => (
-                                              <LemonCheckbox
-                                                  checked={keep.includes(resource.id)}
-                                                  onChange={(enabled) => setKeep(resource.id, enabled)}
-                                                  disabled={removedLoading}
-                                                  label="Keep enabled"
-                                                  data-attr="offboarding-disable-dashboard"
-                                              />
-                                          ),
-                                      },
-                                  ]
-                                : []),
-                        ]}
-                    />
-                    {isSelf && <p>Public sharing will be disabled for these dashboards when you leave.</p>}
+                    <h3>{subscriptionStep ? 'Created subscriptions' : 'Publicly shared dashboards'}</h3>
+                    {subscriptionStep ? (
+                        <>
+                            <p>
+                                Choose which subscriptions to keep enabled. All other subscriptions will stop sending
+                                reports to all recipients.
+                            </p>
+                            <LemonBanner type="warning">
+                                This member's email address will be removed from subscription recipients, including
+                                subscriptions created by other members. Subscriptions you keep can still send data to
+                                other external addresses or destinations.
+                            </LemonBanner>
+                        </>
+                    ) : (
+                        <p>
+                            These dashboards were created or shared by this member. Choose which public links to keep
+                            enabled. All other public links will be disabled when they leave.
+                        </p>
+                    )}
+                    {items.length === 0 ? (
+                        <p>No publicly shared dashboards to review.</p>
+                    ) : (
+                        <>
+                            {!isSelf && (
+                                <LemonCheckbox
+                                    checked={
+                                        retainedCount === 0
+                                            ? false
+                                            : retainedCount === items.length
+                                              ? true
+                                              : 'indeterminate'
+                                    }
+                                    onChange={() =>
+                                        (subscriptionStep ? disableAllSubscriptions : disableAll)(
+                                            retainedCount === items.length
+                                        )
+                                    }
+                                    disabled={removedLoading}
+                                    label={
+                                        subscriptionStep
+                                            ? 'Keep all subscriptions enabled'
+                                            : 'Keep public sharing enabled for all dashboards'
+                                    }
+                                    data-attr={
+                                        subscriptionStep
+                                            ? 'offboarding-disable-all-subscriptions'
+                                            : 'offboarding-disable-all-dashboards'
+                                    }
+                                />
+                            )}
+                            <LemonTable
+                                dataSource={items}
+                                rowKey="id"
+                                pagination={items.length > 5 ? { pageSize: 5 } : undefined}
+                                columns={[
+                                    {
+                                        title: subscriptionStep ? 'Subscription' : 'Dashboard',
+                                        key: 'name',
+                                        render: (_, resource) => (
+                                            <div className="flex flex-col min-w-0">
+                                                <span className="break-words">{resource.name}</span>
+                                                <span className="text-secondary text-xs break-words">
+                                                    {resource.project_name}
+                                                </span>
+                                            </div>
+                                        ),
+                                    },
+                                    ...(!isSelf
+                                        ? [
+                                              {
+                                                  title: subscriptionStep ? 'Delivery' : 'Public sharing',
+                                                  key: 'disable',
+                                                  width: 144,
+                                                  render: (_: unknown, resource: (typeof items)[number]) => (
+                                                      <LemonCheckbox
+                                                          checked={keep.includes(resource.id)}
+                                                          onChange={(enabled) => setKeep(resource.id, enabled)}
+                                                          disabled={removedLoading}
+                                                          label="Keep enabled"
+                                                          data-attr={
+                                                              subscriptionStep
+                                                                  ? 'offboarding-disable-subscription'
+                                                                  : 'offboarding-disable-dashboard'
+                                                          }
+                                                      />
+                                                  ),
+                                              },
+                                          ]
+                                        : []),
+                                ]}
+                            />
+                            {isSelf && (
+                                <p>
+                                    {subscriptionStep
+                                        ? 'These subscriptions will be disabled when you leave.'
+                                        : 'Public sharing will be disabled for these dashboards when you leave.'}
+                                </p>
+                            )}
+                        </>
+                    )}
                 </section>
             ) : null}
-            {!scopedApiKeysLoading && !!scopedApiKeys?.keys.length && (
+            {!needsSubscriptionReview && !scopedApiKeysLoading && !!scopedApiKeys?.keys.length && (
                 <div className="mt-4">
                     <LemonBanner type="warning" className="mb-2">
                         The following personal API keys will lose access to this organization and will stop working

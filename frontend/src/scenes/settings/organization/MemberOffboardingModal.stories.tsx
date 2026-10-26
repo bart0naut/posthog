@@ -1,7 +1,8 @@
 import { MOCK_SECOND_ORGANIZATION_MEMBER } from 'lib/api.mock'
 
 import type { Meta, StoryObj } from '@storybook/react'
-import { waitFor } from '@testing-library/react'
+import { waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import { mswDecorator } from '~/mocks/browser'
 
@@ -24,6 +25,8 @@ const resources = [
         project_name: 'Website',
     },
     { id: 'public_link:dashboard:2:3', kind: 'dashboard', name: 'Activation funnel', team_id: 2, project_name: 'App' },
+    { id: 'subscription:1', kind: 'subscription', name: 'Weekly product report', team_id: 1, project_name: 'Website' },
+    { id: 'subscription:2', kind: 'subscription', name: 'Acquisition report', team_id: 2, project_name: 'App' },
 ]
 
 const meta: Meta<typeof MemberOffboardingModal> = {
@@ -61,5 +64,13 @@ export const NoResources: Story = {
                 throw new Error(logic.values.loadError || 'Waiting for resource review')
             }
         })
+    },
+}
+
+export const SubscriptionsStep: Story = {
+    play: async (context) => {
+        await meta.play?.(context)
+        await userEvent.click(within(document.body).getByRole('button', { name: 'Next: subscriptions' }))
+        await within(document.body).findByRole('heading', { name: 'Created subscriptions' })
     },
 }
