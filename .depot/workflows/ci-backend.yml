@@ -41,10 +41,10 @@
 # - The actions/cache client gives each cache service request a 3-minute socket timeout and
 #   tries it 5 times. No input or env var shortens either, and SEGMENT_DOWNLOAD_TIMEOUT_MINS
 #   only covers the blob download that follows. A stalled request therefore holds a restore for
-#   about 15 minutes and still ends in a miss. Every actions/cache/restore step sets
-#   timeout-minutes and continue-on-error so that a stall becomes a miss early. Schema restores
-#   get 4 minutes, which lets one retry run, because a miss there means a from-scratch migrate.
-#   Saves and artifact uploads have no step bound, because a timeout would drop what they write.
+#   about 15 minutes and still ends in a miss. Restores in this file and in the setup-pnpm,
+#   setup-python-cached and setup-sqlx-cli mirrors set timeout-minutes and continue-on-error so
+#   that a stall becomes an early miss. Schema restores get 4 minutes so that one retry runs,
+#   because a schema miss means a from-scratch migrate. Saves stay unbounded, because a timeout drops what they write.
 # - Only master matrix runs save the hypothesis constants cache. PR shards rebuild the pool
 #   until the hourly run saves it.
 # - The env block clears GITHUB_TOKEN and OTEL_SERVICE_NAME because Depot provides them by default.
@@ -3425,8 +3425,6 @@ jobs:
                   } >> "$GITHUB_OUTPUT"
             - name: Restore hypothesis constants cache
               id: hyp-constants
-              timeout-minutes: 2
-              continue-on-error: true
               uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
               with:
                   # Constants only. Do NOT add .hypothesis/examples: the example
