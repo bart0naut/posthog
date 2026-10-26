@@ -12,7 +12,6 @@ import { SelfDrivingSection } from '../config/SelfDrivingSection'
 import { SignalSourcesPanel } from '../config/SignalSourcesPanel'
 import { SlackNotificationsSection } from '../config/SlackNotificationsSection'
 import { InboxUsageWidget } from '../shell/InboxUsageWidget'
-import { InstallationSetupSection } from '../shell/InstallationSetupSection'
 import { SettingsSection } from './SettingsSection'
 
 /**
@@ -29,7 +28,6 @@ export function SettingsTab(): JSX.Element {
 
     return (
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-6">
-            <InstallationSetupSection />
             <SettingsSection
                 title="Signal sources"
                 description="Each source watches for signals, and spins up an agent to look into them."

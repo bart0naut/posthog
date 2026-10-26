@@ -13,9 +13,6 @@ import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 import { isEmbeddedPageFrame } from 'lib/utils/embeddedPageFrame'
 import { lazyWithRetry } from 'lib/utils/retryImport'
 import { billingLogic } from 'scenes/billing/billingLogic'
-import { WizardHandoffDialog } from 'scenes/onboarding/shared/wizard-sync/WizardHandoffDialog'
-import { WizardSyncDebugPanel } from 'scenes/onboarding/shared/wizard-sync/WizardSyncDebugPanel'
-import { WizardSyncFab } from 'scenes/onboarding/shared/wizard-sync/WizardSyncFab'
 import { userLogic } from 'scenes/userLogic'
 
 import { ErrorBoundary } from '~/layout/ErrorBoundary'
@@ -27,7 +24,6 @@ import { breadcrumbsLogic } from '~/layout/navigation/Breadcrumbs/breadcrumbsLog
 import { ImpersonationNotice } from '~/layout/navigation/ImpersonationNotice'
 
 import { webmcpLogic } from 'products/webmcp/frontend/logics/webmcpLogic'
-import { WizardRunSyncFab } from 'products/wizard/frontend/runs/WizardRunSyncFab'
 
 import { sceneLogic } from './sceneLogic'
 
@@ -56,9 +52,10 @@ export default function AuthenticatedShell({ children }: { children: React.React
     const { featureFlags } = useValues(featureFlagLogic)
     const { isDarkModeOn } = useValues(themeLogic)
     const { user } = useValues(userLogic)
+
     const showInternalFeedback =
         !!featureFlags[FEATURE_FLAGS.INTERNAL_FEEDBACK_WIDGET] && !!user?.email?.toLowerCase().endsWith('@posthog.com')
-    const runSyncEnabled = featureFlags[FEATURE_FLAGS.WIZARD_RUN_SYNC] === 'wizard-run'
+
     const toasts = (
         <ToastContainer
             autoClose={6000}
@@ -97,11 +94,6 @@ export default function AuthenticatedShell({ children }: { children: React.React
                 )}
                 <Command />
                 <ImpersonationNotice />
-                {runSyncEnabled ? <WizardRunSyncFab /> : <WizardSyncFab />}
-                {/* Separate from the FAB: the FAB stands down while an inline panel shows the run,
-                    but the doc dialog must be able to open from any surface. */}
-                <WizardHandoffDialog />
-                <WizardSyncDebugPanel />
                 {showInternalFeedback && (
                     <ErrorBoundary>
                         <Suspense fallback={null}>

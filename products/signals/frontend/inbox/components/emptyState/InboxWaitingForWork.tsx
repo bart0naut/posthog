@@ -5,12 +5,10 @@ import { Link } from '@posthog/lemon-ui'
 
 import { urls } from 'scenes/urls'
 
-import { inboxOnboardingLogic } from '../../logics/inboxOnboardingLogic'
 import { inboxSetupLogic } from '../../logics/inboxSetupLogic'
 import { scoutFleetLogic } from '../../logics/scoutFleetLogic'
 import { signalSourcesLogic } from '../../signalSourcesLogic'
 import { SignalSourceConfig, SignalSourceProduct, SignalSourceType } from '../../types'
-import { InstallingFlowRow } from './InstallingFlowRow'
 import { ScoutFlowRow } from './ScoutFlowRow'
 import { SignalSourceFlowRow } from './SignalSourceFlowRow'
 
@@ -41,7 +39,6 @@ export function InboxWaitingForWork(): JSX.Element {
 
     const { sourceConfigs, sourceConfigsLoading, hasEmittingScanner } = useValues(signalSourcesLogic)
     const { scoutConfigs, scoutConfigsLoading } = useValues(scoutFleetLogic)
-    const { isWizardRunning } = useValues(inboxOnboardingLogic)
     const { completed } = useValues(inboxSetupLogic)
     const enabledSources = [
         ...uniqueEnabledSources(sourceConfigs),
@@ -79,12 +76,8 @@ export function InboxWaitingForWork(): JSX.Element {
                             <h3 className="m-0 text-sm font-semibold">Signal sources</h3>
                             <p className="m-0 text-xs text-tertiary">Events that start an investigation</p>
                         </div>
-                        <span
-                            className={`flex items-center gap-1 text-xs ${isWizardRunning ? 'text-warning' : 'text-success'}`}
-                        >
-                            {isWizardRunning ? (
-                                'Installing'
-                            ) : sourcesLoading ? (
+                        <span className="flex items-center gap-1 text-xs text-success">
+                            {sourcesLoading ? (
                                 'Loading'
                             ) : (
                                 <>
@@ -102,8 +95,7 @@ export function InboxWaitingForWork(): JSX.Element {
                                 outcome={completed ? 'Investigate and create a report.' : undefined}
                             />
                         ))}
-                        {isWizardRunning ? <InstallingFlowRow type="source" /> : null}
-                        {!sourcesLoading && !isWizardRunning && visibleSources.length === 0 ? (
+                        {!sourcesLoading && visibleSources.length === 0 ? (
                             <p className="m-0 p-3 text-xs text-tertiary">No signal sources are active.</p>
                         ) : null}
                     </div>
@@ -125,12 +117,8 @@ export function InboxWaitingForWork(): JSX.Element {
                             <h3 className="m-0 text-sm font-semibold">Scouts</h3>
                             <p className="m-0 text-xs text-tertiary">Scheduled checks across your data</p>
                         </div>
-                        <span
-                            className={`flex items-center gap-1 text-xs ${isWizardRunning ? 'text-warning' : 'text-success'}`}
-                        >
-                            {isWizardRunning ? (
-                                'Installing'
-                            ) : scoutsLoading ? (
+                        <span className="flex items-center gap-1 text-xs text-success">
+                            {scoutsLoading ? (
                                 'Loading'
                             ) : (
                                 <>
@@ -144,8 +132,7 @@ export function InboxWaitingForWork(): JSX.Element {
                         {visibleScouts.map((scout) => (
                             <ScoutFlowRow key={scout.id} scout={scout} />
                         ))}
-                        {isWizardRunning ? <InstallingFlowRow type="scout" /> : null}
-                        {!scoutsLoading && !isWizardRunning && visibleScouts.length === 0 ? (
+                        {!scoutsLoading && visibleScouts.length === 0 ? (
                             <p className="m-0 p-3 text-xs text-tertiary">No scouts are active.</p>
                         ) : null}
                     </div>
