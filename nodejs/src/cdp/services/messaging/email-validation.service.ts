@@ -5,7 +5,7 @@ import { Counter } from 'prom-client'
 
 import { HogFlowAction } from '~/cdp/schema/hogflow'
 import { RedisV2 } from '~/common/redis/redis-v2'
-import { noteOobDomain } from '~/common/utils/oob-domains'
+import { checkOobDomain } from '~/common/utils/oob-domains'
 
 import { CyclotronJobInvocationHogFunction } from '../../types'
 
@@ -124,7 +124,13 @@ export class EmailValidationService {
         const domain = domainToASCII(rawDomain) || rawDomain.toLowerCase()
         // Above resolveDeliverability on purpose: one verdict is cached and shared across teams for
         // up to a day, so a check inside the lookup would miss every send that hits the cache.
-        noteOobDomain(domain, 'node_email_validation', { teamId: invocation.teamId })
+        if (checkOobDomain(domain, 'node_email_validation', { teamId: invocation.teamId }) !== null) {
+            return this.skip(
+                invocation.teamId,
+                'blocked_domain',
+                `Skipping send: PostHog doesn't deliver to the domain "${domain}".`
+            )
+        }
 
         const deliverable = await this.resolveDeliverability(domain)
         if (!deliverable) {
@@ -137,7 +143,11 @@ export class EmailValidationService {
         return null
     }
 
-    private skip(teamId: number, reason: 'invalid_syntax' | 'invalid_domain', message: string): string {
+    private skip(
+        teamId: number,
+        reason: 'invalid_syntax' | 'invalid_domain' | 'blocked_domain',
+        message: string
+    ): string {
         cdpEmailMxSkippedTotal.inc({ team_id: String(teamId), reason })
         return message
     }
