@@ -476,6 +476,40 @@ export interface OrganizationMemberGithubLoginApi {
     github_login: string | null
 }
 
+export interface MemberOffboardingRequestApi {
+    /**
+     * Resource identifiers explicitly retained by an organization admin. All other resources are disabled.
+     * @maxItems 10000
+     * @items.maxLength 200
+     */
+    keep?: string[]
+}
+
+/**
+ * * `dashboard` - dashboard
+ */
+export type MemberOffboardingResourceKindEnumApi =
+    (typeof MemberOffboardingResourceKindEnumApi)[keyof typeof MemberOffboardingResourceKindEnumApi]
+
+export const MemberOffboardingResourceKindEnumApi = {
+    Dashboard: 'dashboard',
+} as const
+
+export interface MemberOffboardingResourceApi {
+    /** Opaque identifier used to keep this resource during offboarding. */
+    id: string
+    /** The kind of public object or automated delivery.
+     *
+     * * `dashboard` - dashboard */
+    kind: MemberOffboardingResourceKindEnumApi
+    /** The resource's display name. */
+    name: string
+    /** Project containing the resource. */
+    team_id: number
+    /** Name of the project containing the resource. */
+    project_name: string
+}
+
 export interface OrganizationPersonalAPIKeyOwnerApi {
     /** First name of the key's owner. */
     readonly first_name: string
