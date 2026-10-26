@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Any, cast
 
-from django.db.models import F, Model, Prefetch, QuerySet
+from django.db.models import F, Model, Prefetch, QuerySet, TextChoices
 from django.shortcuts import get_object_or_404
 
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -164,10 +164,14 @@ class OrganizationMemberGithubLoginSerializer(serializers.Serializer):
     )
 
 
+class MemberOffboardingResourceKind(TextChoices):
+    DASHBOARD = "dashboard", "Dashboard"
+
+
 class MemberOffboardingResourceSerializer(serializers.Serializer):
     id = serializers.CharField(help_text="Opaque identifier used to keep this resource during offboarding.")
     kind = serializers.ChoiceField(
-        choices=["dashboard"],
+        choices=MemberOffboardingResourceKind.choices,
         help_text="The kind of public object or automated delivery.",
     )
     name = serializers.CharField(help_text="The resource's display name.")

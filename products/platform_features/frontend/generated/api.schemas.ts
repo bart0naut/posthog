@@ -486,7 +486,7 @@ export interface MemberOffboardingRequestApi {
 }
 
 /**
- * * `dashboard` - dashboard
+ * * `dashboard` - Dashboard
  */
 export type MemberOffboardingResourceKindEnumApi =
     (typeof MemberOffboardingResourceKindEnumApi)[keyof typeof MemberOffboardingResourceKindEnumApi]
@@ -500,7 +500,7 @@ export interface MemberOffboardingResourceApi {
     id: string
     /** The kind of public object or automated delivery.
      *
-     * * `dashboard` - dashboard */
+     * * `dashboard` - Dashboard */
     kind: MemberOffboardingResourceKindEnumApi
     /** The resource's display name. */
     name: string

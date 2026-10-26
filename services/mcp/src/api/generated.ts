@@ -71257,7 +71257,7 @@ export namespace Schemas {
     }
 
     /**
-     * * `dashboard` - dashboard
+     * * `dashboard` - Dashboard
      */
     export type MemberOffboardingResourceKindEnum = typeof MemberOffboardingResourceKindEnum[keyof typeof MemberOffboardingResourceKindEnum];
 
@@ -71271,7 +71271,7 @@ export namespace Schemas {
       id: string;
       /** The kind of public object or automated delivery.
        *
-       * * `dashboard` - dashboard */
+       * * `dashboard` - Dashboard */
       kind: MemberOffboardingResourceKindEnum;
       /** The resource's display name. */
       name: string;
