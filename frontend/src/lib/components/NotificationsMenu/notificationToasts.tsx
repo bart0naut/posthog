@@ -21,7 +21,10 @@ import {
 import { lemonToast } from '@posthog/lemon-ui'
 
 import { notificationsMenuLogic } from 'lib/components/NotificationsMenu/notificationsMenuLogic'
+import { FEATURE_FLAGS } from 'lib/constants'
+import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 
+import { todayShellLogic } from '~/layout/today/todayShellLogic'
 import { InAppNotification } from '~/types'
 
 const NOTIFICATION_TYPE_ICONS: Record<string, { Icon: ComponentType<{ className?: string }>; color: string }> = {
@@ -53,7 +56,22 @@ export function getNotificationIcon(notificationType: string, className: string 
     return <Icon className={`${className} ${color} shrink-0`} />
 }
 
+async function showTodayCriticalNotificationToast(notification: InAppNotification): Promise<void> {
+    const { toast } = await import('@posthog/quill')
+    toast({
+        type: 'warning',
+        title: notification.title,
+        description: notification.body || undefined,
+        timeout: 0,
+        action: { label: 'Open', onClick: () => todayShellLogic.actions.pickPane('notifications') },
+    })
+}
+
 export function showCriticalNotificationToast(notification: InAppNotification): void {
+    if (featureFlagLogic.values.featureFlags[FEATURE_FLAGS.TODAY_RAIL_NAV]) {
+        void showTodayCriticalNotificationToast(notification)
+        return
+    }
     const icon = getNotificationIcon(notification.notification_type)
     lemonToast.info(
         <div className="flex items-start gap-2">

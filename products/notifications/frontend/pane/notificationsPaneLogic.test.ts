@@ -1,8 +1,10 @@
 import { expectLogic } from 'kea-test-utils'
 
 import { teamLogic } from 'scenes/teamLogic'
+import { userLogic } from 'scenes/userLogic'
 
 import { sidePanelNotificationsLogic } from '~/layout/navigation-3000/sidepanel/panels/activity/sidePanelNotificationsLogic'
+import { todayShellLogic } from '~/layout/today/todayShellLogic'
 import { useMocks } from '~/mocks/jest'
 import { initKeaTests } from '~/test/init'
 import { InAppNotification } from '~/types'
@@ -46,14 +48,16 @@ describe('notificationsPaneLogic', () => {
     let requestBodies: unknown[]
     let archiveStatus: number
     let releaseSlowList: () => void
+    let retrieved: NotificationEventApi | null
 
     beforeEach(() => {
         requests = []
         requestBodies = []
         archiveStatus = 200
+        retrieved = null
         const record = async ({ request }: { request: Request }): Promise<void> => {
             requests.push(new URL(request.url))
-            if (request.method === 'POST') {
+            if (request.method === 'POST' || request.method === 'PATCH') {
                 requestBodies.push(await request.json().catch(() => null))
             }
         }
@@ -78,6 +82,13 @@ describe('notificationsPaneLogic', () => {
                 '/api/projects/:team/notifications/unread_count/': async (req) => {
                     await record(req)
                     return [200, SUMMARY]
+                },
+                '/api/projects/:team/notifications/:id/': () => (retrieved ? [200, retrieved] : [404, {}]),
+            },
+            patch: {
+                '/api/users/@me/': async (req) => {
+                    await record(req)
+                    return [200, {}]
                 },
             },
             post: {
@@ -194,5 +205,40 @@ describe('notificationsPaneLogic', () => {
         await expectLogic(logic).toFinishAllListeners()
 
         expect(logic.values.items.map((item) => item.id)).toEqual(['from-default-view'])
+    })
+
+    it('opening the pane after a critical arrival clears the filters and shows that notification', async () => {
+        const critical = makeNotification({ id: 'critical', priority: 'critical', target_type: 'team' })
+        retrieved = critical
+        await expectLogic(logic, () => {
+            logic.actions.setFilters({ read: 'unread', category: 'mentions', project: 'all' })
+        }).toDispatchActions(['setItems'])
+        sidePanelNotificationsLogic.actions.notificationReceived(asLiveEvent(critical))
+
+        await expectLogic(logic, () => todayShellLogic.actions.pickPane('notifications')).toDispatchActions([
+            'revealNotification',
+            'resetView',
+            'prependItem',
+        ])
+
+        expect(logic.values.filtersActive).toBe(false)
+        expect(logic.values.entries[0].notification.id).toBe('critical')
+    })
+
+    it('mutes a kind in one project without touching other projects', async () => {
+        userLogic.actions.loadUserSuccess({
+            ...userLogic.values.user!,
+            notification_settings: {
+                ...userLogic.values.user!.notification_settings,
+                realtime_notifications_disabled: { comment_mention: { '1': true } },
+            },
+        })
+        logic.actions.setItems([makeNotification({ team_id: 2 })], null)
+
+        await expectLogic(logic, () => logic.actions.muteKind(logic.values.entries[0])).toFinishAllListeners()
+
+        expect(requestBodies).toContainEqual({
+            notification_settings: { realtime_notifications_disabled: { comment_mention: { '1': true, '2': true } } },
+        })
     })
 })
