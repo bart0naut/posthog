@@ -429,6 +429,7 @@ export function TrendsLineChart({
                 />
             ) : null}
             {showAnnotations && <AnnotationsLayer insightNumericId={insight.id || 'new'} dates={annotationsDates} />}
+            {context?.chartOverlay}
         </TimeSeriesLineChart>
     )
 }

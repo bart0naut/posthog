@@ -535,6 +535,7 @@ export function TrendsBarChart({
                     previousSeriesKey={previousSeriesKey}
                 />
             )}
+            {context?.chartOverlay}
         </TimeSeriesBarChart>
     )
 }
