@@ -197,6 +197,9 @@ export interface todayShellLogicActions {
     keepSidebarOnNextPage: () => {
         value: true
     }
+    openNotification: (id: string) => {
+        id: string
+    }
     pickPane: (pane: TodayRailPane) => {
         pane: TodayRailPane
     }
@@ -309,6 +312,7 @@ export const todayShellLogic = kea<todayShellLogicType>([
         toggleSidebarPinned: true,
         clickRailPane: (pane: TodayRailPane) => ({ pane }),
         keepSidebarOnNextPage: true,
+        openNotification: (id: string) => ({ id }),
     }),
     windowValues(() => ({
         phoneLayout: (window: Window) => window.innerWidth < TODAY_PHONE_MAX_WIDTH,
@@ -454,6 +458,9 @@ export const todayShellLogic = kea<todayShellLogicType>([
         },
         keepSidebarOnNextPage: () => {
             cache.keepSidebarOnNextPage = true
+        },
+        openNotification: () => {
+            actions.pickPane('notifications')
         },
         locationChanged: ({ method, pathname }) => {
             const pageChanged = method === 'PUSH' && pathname !== cache.lastPathname

@@ -207,19 +207,15 @@ describe('notificationsPaneLogic', () => {
         expect(logic.values.items.map((item) => item.id)).toEqual(['from-default-view'])
     })
 
-    it('opening the pane after a critical arrival clears the filters and shows that notification', async () => {
-        const critical = makeNotification({ id: 'critical', priority: 'critical', target_type: 'team' })
-        retrieved = critical
+    it('opening a critical toast clears the filters and shows that exact notification', async () => {
+        retrieved = makeNotification({ id: 'critical', priority: 'critical', target_type: 'team' })
         await expectLogic(logic, () => {
-            logic.actions.setFilters({ read: 'unread', category: 'mentions', project: 'all' })
+            logic.actions.setFilters({ read: 'unread', category: 'alerts', project: 'all' })
         }).toDispatchActions(['setItems'])
-        sidePanelNotificationsLogic.actions.notificationReceived(asLiveEvent(critical))
 
-        await expectLogic(logic, () => todayShellLogic.actions.pickPane('notifications')).toDispatchActions([
-            'revealNotification',
-            'resetView',
-            'prependItem',
-        ])
+        await expectLogic(logic, () => todayShellLogic.actions.openNotification('critical'))
+            .toDispatchActions(['revealNotification', 'resetView'])
+            .toFinishAllListeners()
 
         expect(logic.values.filtersActive).toBe(false)
         expect(logic.values.entries[0].notification.id).toBe('critical')
@@ -239,6 +235,23 @@ describe('notificationsPaneLogic', () => {
 
         expect(requestBodies).toContainEqual({
             notification_settings: { realtime_notifications_disabled: { comment_mention: { '1': true, '2': true } } },
+        })
+    })
+
+    it('a second mute in a row keeps the first one', async () => {
+        logic.actions.setItems(
+            [makeNotification({ id: 'a', team_id: 2 }), makeNotification({ id: 'b', team_id: 3 })],
+            null
+        )
+        const [first, second] = logic.values.entries
+
+        logic.actions.muteKind(first)
+        await expectLogic(logic, () => logic.actions.muteKind(second)).toFinishAllListeners()
+
+        expect(requestBodies.at(-1)).toEqual({
+            notification_settings: {
+                realtime_notifications_disabled: { comment_mention: expect.objectContaining({ '2': true, '3': true }) },
+            },
         })
     })
 })

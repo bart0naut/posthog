@@ -3,6 +3,7 @@ import posthog from 'posthog-js'
 
 import { toast } from '@posthog/quill'
 
+import { ApiError } from 'lib/api-error'
 import { REALTIME_NOTIFICATION_TYPE_META } from 'lib/components/NotificationsMenu/NotificationRow'
 import { dayjs } from 'lib/dayjs'
 import { organizationLogic } from 'scenes/organizationLogic'
@@ -39,8 +40,8 @@ import {
 import type { NotificationsFilterQuery } from './notificationsPaneFilters'
 
 export const NOTIFICATIONS_PAGE_SIZE = 30
-const CRITICAL_PRIORITY = 'critical'
 const BULK_IDS_MAX = 500
+const NOT_FOUND = 404
 
 export type NotificationsPaneStatus = 'loading' | 'error' | 'ready'
 export type NotificationsPaneOpenSource = 'rail' | 'tab_bar' | 'toast'
@@ -67,18 +68,6 @@ function groupQuery(entry: NotificationPaneEntry): Parameters<typeof notificatio
         resource_type: notification.resource_type ?? undefined,
         resource_id: notification.resource_id,
         team_id: notification.team_id ?? undefined,
-    }
-}
-
-async function setKindMuted(notificationType: string, teamId: number, muted: boolean): Promise<boolean> {
-    const current = userLogic.values.user?.notification_settings?.realtime_notifications_disabled ?? {}
-    const next = { ...current, [notificationType]: { ...current[notificationType], [String(teamId)]: muted } }
-    try {
-        await usersPartialUpdate('@me', { notification_settings: { realtime_notifications_disabled: next } })
-        userLogic.actions.loadUser()
-        return true
-    } catch {
-        return false
     }
 }
 
@@ -121,11 +110,11 @@ export interface notificationsPaneLogicValues {
     loadingMore: boolean
     newCount: number
     nextCursor: string | null
-    pendingCriticalId: string | null
     projectId: string
     projectNames: Record<number, string>
     query: NotificationsListParams
     readPendingKeys: string[]
+    revealedItem: NotificationEventApi | null
     showArchived: boolean
     status: NotificationsPaneStatus
     summary: UnreadSummaryApi | null
@@ -142,8 +131,8 @@ export interface notificationsPaneLogicActions {
     keepSidebarOnNextPage: () => {
         value: true
     } // todayShellLogic
-    pickPane: (pane: import('~/layout/today/todayShellLogic').TodayRailPane) => {
-        pane: import('~/layout/today/todayShellLogic').TodayRailPane
+    openNotification: (id: string) => {
+        id: string
     } // todayShellLogic
     appendItems: (
         items: NotificationEventApi[],
@@ -223,9 +212,6 @@ export interface notificationsPaneLogicActions {
     setLoadMoreFailed: (failed: boolean) => {
         failed: boolean
     }
-    setPendingCriticalId: (id: string | null) => {
-        id: string | null
-    }
     setRead: (
         ids: string[],
         read: boolean
@@ -239,6 +225,9 @@ export interface notificationsPaneLogicActions {
     ) => {
         key: string
         pending: boolean
+    }
+    setRevealedItem: (item: NotificationEventApi | null) => {
+        item: NotificationEventApi | null
     }
     setShowArchived: (showArchived: boolean) => {
         showArchived: boolean
@@ -264,7 +253,11 @@ export interface notificationsPaneLogicActions {
 export interface notificationsPaneLogicMeta {
     __keaTypeGenInternalSelectorTypes: {
         projectNames: (currentOrganization: OrganizationType | null) => Record<number, string>
-        entries: (items: NotificationEventApi[], projectNames: Record<number, string>) => NotificationPaneEntry[]
+        entries: (
+            items: NotificationEventApi[],
+            revealedItem: NotificationEventApi | null,
+            projectNames: Record<number, string>
+        ) => NotificationPaneEntry[]
         filtersActive: (filters: NotificationsPaneFilters) => boolean
         hasUnread: (items: NotificationEventApi[]) => boolean
         filterQuery: (filters: NotificationsPaneFilters, currentTeamId: number | null) => NotificationsFilterQuery
@@ -288,7 +281,7 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
             sidePanelNotificationsLogic,
             ['notificationReceived', 'navigateToNotification'],
             todayShellLogic,
-            ['keepSidebarOnNextPage', 'pickPane'],
+            ['keepSidebarOnNextPage', 'openNotification'],
         ],
     })),
     actions({
@@ -320,7 +313,7 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
         markAllRead: true,
         muteKind: (entry: NotificationPaneEntry) => ({ entry }),
         revealNotification: (id: string) => ({ id }),
-        setPendingCriticalId: (id: string | null) => ({ id }),
+        setRevealedItem: (item: NotificationEventApi | null) => ({ item }),
         loadSummary: true,
         setSummary: (summary: UnreadSummaryApi) => ({ summary }),
     }),
@@ -397,7 +390,16 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
             },
         ],
         summary: [null as UnreadSummaryApi | null, { setSummary: (_, { summary }) => summary }],
-        pendingCriticalId: [null as string | null, { setPendingCriticalId: (_, { id }) => id }],
+        revealedItem: [
+            null as NotificationEventApi | null,
+            {
+                setRevealedItem: (_, { item }) => item,
+                setFilters: () => null,
+                clearFilters: () => null,
+                setShowArchived: () => null,
+                removeItems: (state, { ids }) => (state && ids.includes(state.id) ? null : state),
+            },
+        ],
     }),
     selectors({
         projectNames: [
@@ -406,9 +408,18 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
                 Object.fromEntries((organization?.teams ?? []).map((team) => [team.id, team.name])),
         ],
         entries: [
-            (s) => [s.items, s.projectNames],
-            (items: NotificationEventApi[], projectNames: Record<number, string>): NotificationPaneEntry[] =>
-                buildInboxEntries(items, { projectNames }),
+            (s) => [s.items, s.revealedItem, s.projectNames],
+            (
+                items: NotificationEventApi[],
+                revealedItem: NotificationEventApi | null,
+                projectNames: Record<number, string>
+            ): NotificationPaneEntry[] =>
+                buildInboxEntries(
+                    revealedItem && !items.some((item) => item.id === revealedItem.id)
+                        ? [revealedItem, ...items]
+                        : items,
+                    { projectNames }
+                ),
         ],
         filtersActive: [
             (s) => [s.filters],
@@ -428,10 +439,34 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
         ],
         projectId: [(s) => [s.currentTeamId], (currentTeamId: number | null) => String(currentTeamId ?? '')],
     }),
-    listeners(({ actions, values }) => {
+    listeners(({ actions, values, cache }) => {
         const failed = (verb: string, revert: () => void): void => {
             revert()
             toast.error({ title: `Couldn't ${verb}. Try again` })
+        }
+
+        const saveMuted = (notificationType: string, teamId: number, muted: boolean): Promise<boolean> => {
+            const save = async (): Promise<boolean> => {
+                const current: Record<string, Record<string, boolean>> = cache.savedMuteMap ??
+                userLogic.values.user?.notification_settings?.realtime_notifications_disabled ??
+                {}
+                const next = {
+                    ...current,
+                    [notificationType]: { ...current[notificationType], [String(teamId)]: muted },
+                }
+                try {
+                    await usersPartialUpdate('@me', {
+                        notification_settings: { realtime_notifications_disabled: next },
+                    })
+                } catch {
+                    return false
+                }
+                cache.savedMuteMap = next
+                userLogic.actions.loadUser()
+                return true
+            }
+            cache.muteQueue = (cache.muteQueue ?? Promise.resolve(true)).then(save, save)
+            return cache.muteQueue
         }
 
         return {
@@ -482,9 +517,6 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
             showNewNotifications: () => actions.loadNotifications(),
             notificationReceived: ({ notification }) => {
                 actions.loadSummary()
-                if (notification.priority === CRITICAL_PRIORITY && !notification.read) {
-                    actions.setPendingCriticalId(notification.id)
-                }
                 const item = notification as unknown as NotificationEventApi
                 if (values.showArchived || !matchesFilters(item, values.filters, values.currentTeamId)) {
                     return
@@ -631,22 +663,31 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
                 }
                 actions.loadSummary()
             },
-            pickPane: ({ pane }) => {
-                if (pane === 'notifications' && values.pendingCriticalId) {
-                    actions.revealNotification(values.pendingCriticalId)
-                }
-            },
+            openNotification: ({ id }) => actions.revealNotification(id),
             revealNotification: async ({ id }) => {
-                actions.setPendingCriticalId(null)
                 if (values.filtersActive || values.showArchived) {
                     actions.resetView()
                 }
-                const notification = await notificationsRetrieve(values.projectId, id).catch(() => null)
-                if (!notification || notification.archived) {
+                const resolved = (): void => {
                     toast({ title: 'This was already resolved' })
-                    return
                 }
-                actions.prependItem(notification)
+                try {
+                    const notification = await notificationsRetrieve(values.projectId, id)
+                    if (notification.archived) {
+                        resolved()
+                        return
+                    }
+                    actions.setRevealedItem(notification)
+                } catch (error) {
+                    if (error instanceof ApiError && error.status === NOT_FOUND) {
+                        resolved()
+                        return
+                    }
+                    toast.error({
+                        title: "Couldn't open that notification",
+                        action: { label: 'Try again', onClick: () => actions.revealNotification(id) },
+                    })
+                }
             },
             muteKind: async ({ entry }) => {
                 const { notification_type, team_id } = entry.notification
@@ -655,16 +696,19 @@ export const notificationsPaneLogic = kea<notificationsPaneLogicType>([
                 }
                 const kind = REALTIME_NOTIFICATION_TYPE_META[notification_type]?.label ?? 'these notifications'
                 const projectName = entry.projectName ?? 'this project'
-                const saved = await setKindMuted(notification_type, team_id, true)
-                if (!saved) {
+                if (!(await saveMuted(notification_type, team_id, true))) {
                     toast.error({ title: "Couldn't mute. Try again" })
                     return
                 }
                 posthog.capture('notification muted', { notification_type })
-                toast({
-                    title: `Muted ${kind} in ${projectName}`,
-                    action: { label: 'Undo', onClick: () => void setKindMuted(notification_type, team_id, false) },
-                })
+                const unmute = (): void => {
+                    void saveMuted(notification_type, team_id, false).then((saved) => {
+                        if (!saved) {
+                            toast.error({ title: "Couldn't unmute", action: { label: 'Try again', onClick: unmute } })
+                        }
+                    })
+                }
+                toast({ title: `Muted ${kind} in ${projectName}`, action: { label: 'Undo', onClick: unmute } })
             },
             loadSummary: async () => {
                 const summary = await notificationsUnreadCountRetrieve(values.projectId).catch(() => null)

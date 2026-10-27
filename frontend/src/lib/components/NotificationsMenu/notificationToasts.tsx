@@ -63,7 +63,7 @@ async function showTodayCriticalNotificationToast(notification: InAppNotificatio
         title: notification.title,
         description: notification.body || undefined,
         timeout: 0,
-        action: { label: 'Open', onClick: () => todayShellLogic.actions.pickPane('notifications') },
+        action: { label: 'Open', onClick: () => todayShellLogic.actions.openNotification(notification.id) },
     })
 }
 
