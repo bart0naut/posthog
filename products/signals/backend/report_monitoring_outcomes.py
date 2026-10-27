@@ -76,6 +76,33 @@ def _member_state(results: list[SignalReportMonitoringResult]) -> MonitoringMemb
     return MonitoringMemberState.WAITING
 
 
+def _dispatch_tracker_issue_close(*, team_id: int, attempt_id: UUID) -> None:
+    attempt = (
+        SignalReportMonitoringAttempt.objects.for_team(team_id)
+        .filter(
+            id=attempt_id,
+            tracker_issue_close_requested_at__isnull=False,
+            tracker_issue_close_dispatched_at__isnull=True,
+        )
+        .first()
+    )
+    if attempt is None:
+        return
+    # The tasks module imports contracts that must stay off Django's startup path.
+    from products.signals.backend.tasks import close_report_tracker_issue  # noqa: PLC0415
+
+    try:
+        close_report_tracker_issue.delay(
+            report_id=str(attempt.report_id), team_id=team_id, completed=True, actor_user_id=None
+        )
+    except Exception:
+        logger.exception("signals.monitoring.tracker_issue_dispatch_failed", attempt_id=str(attempt.id))
+        return
+    SignalReportMonitoringAttempt.objects.for_team(team_id).filter(
+        id=attempt_id, tracker_issue_close_dispatched_at__isnull=True
+    ).update(tracker_issue_close_dispatched_at=timezone.now())
+
+
 def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: UUID) -> MonitoringAggregation:
     with transaction.atomic():
         report = SignalReport.objects.select_for_update(no_key=True).filter(team_id=team_id, id=report_id).first()
@@ -130,52 +157,55 @@ def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: U
         if decision == MonitoringAggregation.FAILED and attempt.research_requested_at is None:
             attempt.research_requested_at = now
             fields.append("research_requested_at")
+        if decision == MonitoringAggregation.PASSED and attempt.tracker_issue_close_requested_at is None:
+            attempt.tracker_issue_close_requested_at = now
+            fields.append("tracker_issue_close_requested_at")
         attempt.save(update_fields=fields)
+        for check_id, state in states.items():
+            if state not in {MonitoringMemberState.PASSED, MonitoringMemberState.FAILED}:
+                continue
+            check = checks[check_id]
+            if check.status == state.value:
+                continue
+            result = next(result for result in member_results[check_id] if result.outcome == state.value)
+            SignalReportCheck.objects.for_team(team_id).filter(id=check.id).update(
+                status=state.value,
+                last_outcome=state.value,
+                last_outcome_reason=None,
+                last_run_at=result.evaluated_at,
+                dispatched_at=None,
+                updated_at=now,
+            )
+            check.status = state.value
+            SignalReportArtefact.add_log(
+                team_id=team_id,
+                report_id=str(report.id),
+                content=CheckResult(
+                    check_id=check_id,
+                    kind=check.kind,
+                    title=check.title,
+                    outcome="passed" if state == MonitoringMemberState.PASSED else "failed",
+                    explanation=result.explanation,
+                ),
+                attribution=ArtefactAttribution.system(),
+            )
         if decision in {MonitoringAggregation.PASSED, MonitoringAggregation.FAILED}:
             # The authoring module imports the coordinator, which imports this module for recovery.
             from products.signals.backend.report_check_authoring import cancel_check  # noqa: PLC0415
 
             for check in checks.values():
-                state = states.get(str(check.id))
-                if state in {MonitoringMemberState.PASSED, MonitoringMemberState.FAILED}:
-                    result = next(result for result in member_results[str(check.id)] if result.outcome == state.value)
-                    SignalReportCheck.objects.for_team(team_id).filter(id=check.id).update(
-                        status=state.value,
-                        last_outcome=state.value,
-                        last_outcome_reason=None,
-                        last_run_at=result.evaluated_at,
-                        dispatched_at=None,
-                        updated_at=now,
-                    )
-                    SignalReportArtefact.add_log(
-                        team_id=team_id,
-                        report_id=str(report.id),
-                        content=CheckResult(
-                            check_id=str(check.id),
-                            kind=check.kind,
-                            title=check.title,
-                            outcome="passed" if state == MonitoringMemberState.PASSED else "failed",
-                            explanation=result.explanation,
-                        ),
-                        attribution=ArtefactAttribution.system(),
-                    )
-                elif check.status in SignalReportCheck.OPEN_STATUSES:
+                if check.status in SignalReportCheck.OPEN_STATUSES:
                     cancel_check(check, reason="monitoring_completed", attribution=ArtefactAttribution.system())
             target = (
                 SignalReport.Status.RESOLVED if decision == MonitoringAggregation.PASSED else SignalReport.Status.CLOSED
             )
             report.save(update_fields=report.transition_to(target))
             if decision == MonitoringAggregation.PASSED:
-                # The tasks module imports contracts that must stay off Django's startup path.
-                from products.signals.backend.tasks import close_report_tracker_issue  # noqa: PLC0415
-
                 transaction.on_commit(
                     partial(
-                        close_report_tracker_issue.delay,
-                        report_id=str(report.id),
+                        _dispatch_tracker_issue_close,
                         team_id=team_id,
-                        completed=True,
-                        actor_user_id=None,
+                        attempt_id=attempt.id,
                     )
                 )
         if decision != MonitoringAggregation.WAITING and decision != previous:
@@ -198,6 +228,15 @@ def aggregate_monitoring_attempt_safely(*, team_id: int, report_id: UUID, attemp
 def aggregate_due_monitoring_attempts(*, deadline: float, limit: int) -> None:
     if limit <= 0 or time.monotonic() >= deadline:
         return
+    pending_dispatches = (
+        SignalReportMonitoringAttempt.objects.unscoped()
+        .filter(tracker_issue_close_requested_at__isnull=False, tracker_issue_close_dispatched_at__isnull=True)
+        .order_by("tracker_issue_close_requested_at", "id")[:limit]
+    )
+    for pending in pending_dispatches:
+        if time.monotonic() >= deadline:
+            return
+        _dispatch_tracker_issue_close(team_id=pending.team_id, attempt_id=pending.id)
     result_count = (
         SignalReportMonitoringResult.objects.unscoped()
         .filter(team_id=OuterRef("team_id"), report_id=OuterRef("report_id"), attempt_id=OuterRef("id"))

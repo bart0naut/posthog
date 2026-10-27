@@ -2644,6 +2644,8 @@ class SignalReportMonitoringAttempt(UUIDModel):
     aggregation_checked_at = models.DateTimeField(null=True, blank=True)
     assessment_requested_at = models.DateTimeField(null=True, blank=True)
     research_requested_at = models.DateTimeField(null=True, blank=True)
+    tracker_issue_close_requested_at = models.DateTimeField(null=True, blank=True)
+    tracker_issue_close_dispatched_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

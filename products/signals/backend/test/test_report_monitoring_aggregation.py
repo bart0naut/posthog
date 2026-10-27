@@ -17,6 +17,7 @@ from posthog.models import Team
 
 from products.signals.backend.artefact_attribution import ArtefactAttribution
 from products.signals.backend.artefact_schemas import CheckResult
+from products.signals.backend.facade.api import organization_acted_on_report
 from products.signals.backend.models import (
     SignalReport,
     SignalReportArtefact,
@@ -121,6 +122,11 @@ class TestReportMonitoringAggregation(BaseTest):
             first = save_monitoring_result(self._evaluation(0))
         self.report.refresh_from_db()
         assert self.report.status == SignalReport.Status.MONITORING
+        self.checks[0].refresh_from_db()
+        assert self.checks[0].status == SignalReportCheck.Status.PASSED
+        assert SignalReportArtefact.objects.filter(report=self.report, type="check_result").count() == 1
+        self._aggregate()
+        assert SignalReportArtefact.objects.filter(report=self.report, type="check_result").count() == 1
         final = self._evaluation(1)
         with self.captureOnCommitCallbacks(execute=True):
             second = save_monitoring_result(final)
@@ -171,6 +177,7 @@ class TestReportMonitoringAggregation(BaseTest):
             save_monitoring_result(self._evaluation(0, "failed"))
         self.report.refresh_from_db()
         assert self.report.status == SignalReport.Status.CLOSED
+        assert organization_acted_on_report(self.organization.id)
         assert self.report.error is None
         assert self.attempt is not None
         self.attempt.refresh_from_db()
@@ -209,6 +216,8 @@ class TestReportMonitoringAggregation(BaseTest):
         assert self.attempt.assessment_requested_at == self.now
         assert self.attempt.research_requested_at is None
         assert self.report.status == SignalReport.Status.MONITORING
+        self.checks[1].refresh_from_db()
+        assert self.checks[1].status == SignalReportCheck.Status.PASSED
         self._aggregate()
         assert SignalReportArtefact.objects.filter(report=self.report, type="note").count() == 1
         with self.captureOnCommitCallbacks(execute=True):
@@ -218,6 +227,29 @@ class TestReportMonitoringAggregation(BaseTest):
         assert self.report.status == SignalReport.Status.CLOSED
         assert self.attempt.assessment_requested_at == self.now
         assert self.attempt.research_requested_at == self.now
+
+    @parameterized.expand([("broker_failure",), ("lost_callback",)])
+    def test_tracker_dispatch_recovers_after_report_resolution(self, cause: str) -> None:
+        self.close_tracker.side_effect = RuntimeError("Broker unavailable")
+        with self.captureOnCommitCallbacks(execute=cause == "broker_failure"):
+            save_monitoring_result(self._evaluation(0))
+            save_monitoring_result(self._evaluation(1))
+            self._aggregate()
+        assert self.attempt is not None
+        self.attempt.refresh_from_db()
+        self.report.refresh_from_db()
+        assert self.report.status == SignalReport.Status.RESOLVED
+        assert self.attempt.tracker_issue_close_requested_at == self.now
+        assert self.attempt.tracker_issue_close_dispatched_at is None
+        initial_calls = 1 if cause == "broker_failure" else 0
+        assert self.close_tracker.call_count == initial_calls
+        self.close_tracker.side_effect = None
+        aggregate_due_monitoring_attempts(deadline=time.monotonic() + 30, limit=10)
+        self.attempt.refresh_from_db()
+        assert self.attempt.tracker_issue_close_dispatched_at == self.now
+        assert self.close_tracker.call_count == initial_calls + 1
+        aggregate_due_monitoring_attempts(deadline=time.monotonic() + 30, limit=10)
+        assert self.close_tracker.call_count == initial_calls + 1
 
     @parameterized.expand(
         [

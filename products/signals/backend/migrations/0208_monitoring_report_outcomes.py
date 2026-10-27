@@ -49,6 +49,16 @@ class Migration(migrations.Migration):
             name="research_requested_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
+        migrations.AddField(
+            model_name="signalreportmonitoringattempt",
+            name="tracker_issue_close_requested_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="signalreportmonitoringattempt",
+            name="tracker_issue_close_dispatched_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
         migrations.AlterField(
             model_name="signalreport",
             name="status",
