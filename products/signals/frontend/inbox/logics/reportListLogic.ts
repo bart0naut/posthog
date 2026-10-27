@@ -20,11 +20,13 @@ import {
 } from 'products/signals/frontend/generated/api'
 import type { SignalReportMetricSnapshotsApi } from 'products/signals/frontend/generated/api.schemas'
 
+import type { SignalReportAssigneeApi } from '../../generated/api.schemas'
 import { createdAfterForWindow } from '../filterOptions'
 import { captureInboxReportAction, type InboxReportActionSurface, setInboxServedRanker } from '../inboxAnalytics'
 import {
     INBOX_PRIMARY_REPORT_SECTION_KEY,
     INBOX_SCOPE_ENTIRE_PROJECT,
+    INBOX_SCOPE_CLAIMED_BY_YOU,
     INBOX_SCOPE_FOR_YOU,
     InboxReportSectionKey,
     InboxScope,
@@ -186,6 +188,7 @@ export interface reportListLogicValues {
     reportsLoadFailed: boolean
     reportsResponse: ReportListResponse | null
     reportsResponseLoading: boolean
+    scopeAssignee: 'mine' | undefined
     scopeReviewerUuid: string | undefined
     staleMetricReportIds: string[]
     totalCount: number | null
@@ -260,7 +263,7 @@ export interface reportListLogicActions {
     ensureLoaded: () => {
         value: true
     }
-    loadCount: () => any
+    loadCount: (_: void) => void
     loadCountFailure: (
         error: string,
         errorObject?: any
@@ -270,10 +273,10 @@ export interface reportListLogicActions {
     }
     loadCountSuccess: (
         count: number,
-        payload?: any
+        payload?: void
     ) => {
         count: number
-        payload?: any
+        payload?: void
     }
     loadMore: () => {
         value: true
@@ -296,7 +299,7 @@ export interface reportListLogicActions {
     loadReportSourceMeta: (reportIds: string[]) => {
         reportIds: string[]
     }
-    loadReports: () => any
+    loadReports: (_: void) => void
     loadReportsFailure: (
         error: string,
         errorObject?: any
@@ -306,10 +309,10 @@ export interface reportListLogicActions {
     }
     loadReportsSuccess: (
         reportsResponse: ReportListResponse,
-        payload?: any
+        payload?: void
     ) => {
         reportsResponse: ReportListResponse
-        payload?: any
+        payload?: void
     }
     refresh: () => {
         value: true
@@ -336,6 +339,13 @@ export interface reportListLogicActions {
         reportId: string
         surface: InboxReportActionSurface
     }
+    setReportAssignee: (
+        reportId: string,
+        assignee: SignalReport['assignee']
+    ) => {
+        assignee: SignalReportAssigneeApi | null | undefined
+        reportId: string
+    }
     setSuggestedToMe: (
         reportIds: string[],
         isSuggested: boolean
@@ -360,6 +370,7 @@ export interface reportListLogicMeta {
     key: 'closed' | 'dismissed' | 'held-back' | 'monitoring' | 'needs-decision' | 'not-actionable' | 'resolved'
     __keaTypeGenInternalSelectorTypes: {
         scopeReviewerUuid: (scope: InboxScope, user: UserType | null) => string | undefined
+        scopeAssignee: (scope: InboxScope) => 'mine' | undefined
         listApiParams: (
             searchQuery: string,
             activeSortField: InboxSortField,
@@ -368,6 +379,7 @@ export interface reportListLogicMeta {
             scoutFilter: string[],
             priorityFilter: SignalReportPriority[],
             scopeReviewerUuid: string | undefined,
+            scopeAssignee: 'mine' | undefined,
             activeCreatedWindow: InboxCreatedWindow | null,
             arg: any
         ) => any
@@ -462,6 +474,7 @@ export const reportListLogic = kea<reportListLogicType>([
         unassignMe: (reportId: string, surface: InboxReportActionSurface) => ({ reportId, surface }),
         unassignMeFinished: (reportId: string) => ({ reportId }),
         setSuggestedToMe: (reportIds: string[], isSuggested: boolean) => ({ reportIds, isSuggested }),
+        setReportAssignee: (reportId: string, assignee: SignalReport['assignee']) => ({ reportId, assignee }),
         removeReport: (reportId: string) => ({ reportId }),
         refresh: true,
         // Ask the server for the newest snapshot of the metrics these rows show. Best effort: a
@@ -481,13 +494,15 @@ export const reportListLogic = kea<reportListLogicType>([
         count: [
             null as number | null,
             {
-                loadCount: async () => {
+                loadCount: async (_: void, breakpoint) => {
                     // nosemgrep: prefer-codegen-api-namespaced-signals -- the Inbox renders the handwritten SignalReport. The generated report type is wider (string status and priority, read-only arrays), so the list calls move to generated types together with the Inbox.
                     const response = await api.signalReports.list({
                         ...listRequestParams(values.listApiParams),
                         limit: 1,
                         count_only: 'true',
                     })
+                    // A newer count request for a changed query supersedes this one.
+                    breakpoint()
                     return response.count
                 },
             },
@@ -498,20 +513,24 @@ export const reportListLogic = kea<reportListLogicType>([
                 // `requestParams` records the query that produced the response, so consumers
                 // (impression telemetry) can key off what was actually fetched rather than the
                 // live `listApiParams`, which changes before the refetch lands.
-                loadReports: async (): Promise<ReportListResponse> => {
+                loadReports: async (_: void, breakpoint): Promise<ReportListResponse> => {
                     const params = values.listApiParams
                     const requestContext = requestContextFromValues(values)
+                    cache.firstPageRequestId = (cache.firstPageRequestId ?? 0) + 1
                     // nosemgrep: prefer-codegen-api-namespaced-signals -- the Inbox renders the handwritten SignalReport. The generated report type is wider (string status and priority, read-only arrays), so the list calls move to generated types together with the Inbox.
                     const response = await api.signalReports.list({
                         ...listRequestParams(params),
                         offset: 0,
                         limit: PAGE_SIZE,
                     })
+                    // A newer first-page request for a changed query supersedes this one.
+                    breakpoint()
                     return { ...response, requestParams: params, requestContext }
                 },
                 loadMoreReports: async (): Promise<ReportListResponse> => {
                     const params = values.listApiParams
                     const requestContext = requestContextFromValues(values)
+                    const firstPageRequestId = cache.firstPageRequestId
                     const current = values.reportsResponse?.results ?? []
                     // `removeReport` records ids here while the request is in flight. `current` predates
                     // those removals, so filter them out or a removed report comes back when the page lands.
@@ -523,6 +542,11 @@ export const reportListLogic = kea<reportListLogicType>([
                         offset: current.length,
                         limit: PAGE_SIZE,
                     })
+                    // A first-page load for a changed query started meanwhile. Its rows win, so this
+                    // page of the old query must not land on top of them.
+                    if (cache.firstPageRequestId !== firstPageRequestId && values.reportsResponse) {
+                        return values.reportsResponse
+                    }
                     return {
                         ...response,
                         results: [...current.filter((r) => !removedWhilePending.has(r.id)), ...response.results],
@@ -564,6 +588,10 @@ export const reportListLogic = kea<reportListLogicType>([
                           results: state.results.filter((r) => r.id !== reportId),
                           count: Math.max(0, state.count - 1),
                       }
+                    : state,
+            setReportAssignee: (state, { reportId, assignee }) =>
+                state?.results.some((r) => r.id === reportId)
+                    ? { ...state, results: state.results.map((r) => (r.id === reportId ? { ...r, assignee } : r)) }
                     : state,
             setSuggestedToMe: (state, { reportIds, isSuggested }) => {
                 const ids = new Set(reportIds)
@@ -618,6 +646,11 @@ export const reportListLogic = kea<reportListLogicType>([
             (scope: InboxScope, user: UserType | null): string | undefined =>
                 scope === INBOX_SCOPE_FOR_YOU ? (user?.uuid ?? undefined) : teammateUuidFromScope(scope),
         ],
+        // `mine` also covers the claims of the user's agents and tasks, where `me` matches only the exact actor.
+        scopeAssignee: [
+            (s) => [s.scope],
+            (scope: InboxScope): 'mine' | undefined => (scope === INBOX_SCOPE_CLAIMED_BY_YOU ? 'mine' : undefined),
+        ],
         // The section's fixed filter merged with the user-driven chrome + reviewer scope (server-side).
         listApiParams: [
             (s) => [
@@ -628,6 +661,7 @@ export const reportListLogic = kea<reportListLogicType>([
                 s.scoutFilter,
                 s.priorityFilter,
                 s.scopeReviewerUuid,
+                s.scopeAssignee,
                 s.activeCreatedWindow,
                 (_, p) => p.listParams,
             ],
@@ -639,6 +673,7 @@ export const reportListLogic = kea<reportListLogicType>([
                 scoutFilter: string[],
                 priorityFilter: import('../types').SignalReportPriority[],
                 suggestedReviewer: string | undefined,
+                assignee: 'mine' | undefined,
                 activeCreatedWindow: InboxCreatedWindow | null,
                 listParams
             ) => {
@@ -650,6 +685,7 @@ export const reportListLogic = kea<reportListLogicType>([
                     scout: scoutFilter.length > 0 ? scoutFilter.join(',') : undefined,
                     priority: priorityFilter.length > 0 ? priorityFilter.join(',') : undefined,
                     suggested_reviewers: suggestedReviewer,
+                    assignee,
                     created_window: activeCreatedWindow ?? undefined,
                     // Rows render from Postgres alone; `loadReportSourceMeta` fills the source line after.
                     include_source_metadata: 'false',
@@ -823,13 +859,20 @@ export const reportListLogic = kea<reportListLogicType>([
             }
         },
         loadMore: () => {
-            if (values.hasMore && !values.reportsResponseLoading) {
+            // Page only from rows of the current query. Rows from before a filter change get
+            // replaced, so a next page appended to them would mix two queries.
+            if (
+                values.hasMore &&
+                !values.reportsResponseLoading &&
+                values.loadedQueryKey === JSON.stringify(values.listApiParams)
+            ) {
                 actions.loadMoreReports()
             }
         },
         refresh: () => {
             actions.loadCount()
-            if (values.isLoaded) {
+            // An in-flight first page was requested with the old filters, so it reloads too.
+            if (values.isLoaded || values.reportsResponseLoading) {
                 actions.loadReports()
             }
         },
@@ -931,6 +974,23 @@ export const reportListLogic = kea<reportListLogicType>([
             if (userUuid) {
                 actions.setSuggestedToMe([reportId], reviewerUuids.includes(userUuid))
             }
+        },
+        // The Claimed by you list holds only the user's claims: a release drops the row in place, and a
+        // new claim reloads the list so the row joins it. Every other list updates the claim tag.
+        [inboxBulkActionsLogic.actionTypes.reportClaimChanged]: ({ reportId, assignee }) => {
+            const isLoaded = values.reports.some((r) => r.id === reportId)
+            if (values.scopeAssignee) {
+                const isMine = !!values.user?.uuid && assignee?.responsible_user?.uuid === values.user.uuid
+                if (!isMine && isLoaded) {
+                    actions.removeReport(reportId)
+                    return
+                }
+                if (isMine && !isLoaded) {
+                    actions.refresh()
+                    return
+                }
+            }
+            actions.setReportAssignee(reportId, assignee)
         },
         [inboxBulkActionsLogic.actionTypes.unassignedMe]: ({ reportIds }: { reportIds: string[] }) => {
             if (values.isScopedToMe) {
