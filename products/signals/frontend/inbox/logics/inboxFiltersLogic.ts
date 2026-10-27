@@ -458,6 +458,7 @@ export interface inboxFiltersLogicMeta {
         ) => InboxCreatedWindow | null
         visibleStateFilter: (
             stateFilter: (
+                | 'closed'
                 | 'dismissed'
                 | 'held-back'
                 | 'monitoring'

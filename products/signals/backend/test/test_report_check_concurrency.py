@@ -282,6 +282,50 @@ class TestReportCheckConcurrency(NonAtomicBaseTest):
         assert self.report.status == SignalReport.Status.RESOLVED
         assert attempt.research_requested_at is None
 
+    def test_aggregation_does_not_wait_for_unrelated_historical_checks(self) -> None:
+        with (
+            patch("products.signals.backend.report_content_gates.feature_enabled_or_false", return_value=True),
+            patch("products.signals.backend.tasks.close_report_tracker_issue.delay"),
+            ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            evaluation = self._final_evaluation()
+            SignalReportMonitoringResult.objects.for_team(self.team.id).create(
+                team_id=self.team.id,
+                report_id=self.report.id,
+                attempt_id=evaluation.attempt_id,
+                report_check_id=self.check.id,
+                submission_id=evaluation.submission_id,
+                definition_version=evaluation.definition_version,
+                window_start=evaluation.window_start,
+                window_end=evaluation.window_end,
+                evaluated_at=evaluation.evaluated_at,
+                outcome="passed",
+                evidence_status="sufficient",
+                evidence_reason=evaluation.evidence_reason,
+                expectation_matches=True,
+                explanation=evaluation.explanation,
+            )
+            historical = SignalReportCheck.objects.for_team(self.team.id).create(
+                team_id=self.team.id,
+                report=self.report,
+                title="An expired observation",
+                kind=SignalReportCheck.Kind.METRIC_THRESHOLD,
+                status=SignalReportCheck.Status.EXPIRED,
+                next_run_at=timezone.now(),
+                expires_at=timezone.now(),
+            )
+            with transaction.atomic():
+                SignalReportCheck.objects.for_team(self.team.id).select_for_update().get(id=historical.id)
+                future = self._start_write(
+                    executor,
+                    lambda: aggregate_monitoring_attempt(
+                        team_id=self.team.id, report_id=self.report.id, attempt_id=evaluation.attempt_id
+                    ),
+                )
+                assert future.result(timeout=10) == "passed"
+        self.report.refresh_from_db()
+        assert self.report.status == SignalReport.Status.RESOLVED
+
     @parameterized.expand([("cancelled",), ("extended",)])
     def test_expiry_sweep_preserves_a_concurrent_change(self, change: str) -> None:
         now = timezone.now()

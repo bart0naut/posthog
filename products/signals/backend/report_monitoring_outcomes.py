@@ -3,17 +3,18 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import partial
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import Count, F, Func, IntegerField, OuterRef, Subquery, Value
+from django.db.models import Count, F, Func, IntegerField, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 import structlog
 
 from products.signals.backend.artefact_attribution import ArtefactAttribution
-from products.signals.backend.artefact_schemas import NoteArtefact
+from products.signals.backend.artefact_schemas import CheckResult, NoteArtefact
 from products.signals.backend.models import (
     SignalReport,
     SignalReportArtefact,
@@ -34,24 +35,24 @@ from products.signals.backend.report_monitoring_attempts import check_definition
 logger = structlog.get_logger(__name__)
 
 
-def _member_state(
+def _member_results(
     check: SignalReportCheck | None,
     version: str,
     attempt: SignalReportMonitoringAttempt,
     results: list[SignalReportMonitoringResult],
     now: datetime,
-) -> MonitoringMemberState:
+) -> list[SignalReportMonitoringResult]:
     if (
         check is None
         or check.status == SignalReportCheck.Status.CANCELLED
         or check_definition_version(check) != version
         or check.soak_minutes is None
     ):
-        return MonitoringMemberState.WAITING
+        return []
     end = attempt.monitoring_started_at + timedelta(minutes=check.soak_minutes)
     if end > now:
-        return MonitoringMemberState.WAITING
-    valid = [
+        return []
+    return [
         result
         for result in results
         if result.definition_version == version
@@ -59,15 +60,18 @@ def _member_state(
         and result.window_end == end
         and end <= result.evaluated_at <= now
     ]
-    for result in valid:
+
+
+def _member_state(results: list[SignalReportMonitoringResult]) -> MonitoringMemberState:
+    for result in results:
         if result.evidence_status == "sufficient":
             if result.outcome == "failed" and result.expectation_matches is False:
                 return MonitoringMemberState.FAILED
             if result.outcome == "passed" and result.expectation_matches is True:
                 return MonitoringMemberState.PASSED
-    if any(result.evidence_status in {"insufficient", "unsupported"} for result in valid):
+    if any(result.evidence_status in {"insufficient", "unsupported"} for result in results):
         return MonitoringMemberState.INCONCLUSIVE
-    if sum(result.evidence_status == "errored" for result in valid) >= MAX_CONSECUTIVE_CHECK_ERRORS:
+    if sum(result.evidence_status == "errored" for result in results) >= MAX_CONSECUTIVE_CHECK_ERRORS:
         return MonitoringMemberState.EXHAUSTED
     return MonitoringMemberState.WAITING
 
@@ -89,6 +93,7 @@ def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: U
             for check in SignalReportCheck.objects.for_team(team_id)
             .select_for_update()
             .filter(report_id=report.id)
+            .filter(Q(id__in=attempt.check_versions) | Q(status__in=SignalReportCheck.OPEN_STATUSES))
             .order_by("id")
         }
         results = list(
@@ -100,10 +105,11 @@ def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: U
         for result in results:
             by_check[str(result.report_check_id)].append(result)
         now = timezone.now()
-        states = {
-            check_id: _member_state(checks.get(check_id), version, attempt, by_check[check_id], now)
+        member_results = {
+            check_id: _member_results(checks.get(check_id), version, attempt, by_check[check_id], now)
             for check_id, version in attempt.check_versions.items()
         }
+        states = {check_id: _member_state(valid) for check_id, valid in member_results.items()}
         decision = aggregate_monitoring_members(list(states.values()))
         previous = attempt.aggregation_state
         attempt.aggregation_state = decision
@@ -132,15 +138,46 @@ def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: U
             for check in checks.values():
                 state = states.get(str(check.id))
                 if state in {MonitoringMemberState.PASSED, MonitoringMemberState.FAILED}:
+                    result = next(result for result in member_results[str(check.id)] if result.outcome == state.value)
                     SignalReportCheck.objects.for_team(team_id).filter(id=check.id).update(
-                        status=state.value, last_outcome=state.value, last_outcome_reason=None, updated_at=now
+                        status=state.value,
+                        last_outcome=state.value,
+                        last_outcome_reason=None,
+                        last_run_at=result.evaluated_at,
+                        dispatched_at=None,
+                        updated_at=now,
                     )
-                else:
+                    SignalReportArtefact.add_log(
+                        team_id=team_id,
+                        report_id=str(report.id),
+                        content=CheckResult(
+                            check_id=str(check.id),
+                            kind=check.kind,
+                            title=check.title,
+                            outcome="passed" if state == MonitoringMemberState.PASSED else "failed",
+                            explanation=result.explanation,
+                        ),
+                        attribution=ArtefactAttribution.system(),
+                    )
+                elif check.status in SignalReportCheck.OPEN_STATUSES:
                     cancel_check(check, reason="monitoring_completed", attribution=ArtefactAttribution.system())
             target = (
                 SignalReport.Status.RESOLVED if decision == MonitoringAggregation.PASSED else SignalReport.Status.CLOSED
             )
             report.save(update_fields=report.transition_to(target))
+            if decision == MonitoringAggregation.PASSED:
+                # The tasks module imports contracts that must stay off Django's startup path.
+                from products.signals.backend.tasks import close_report_tracker_issue  # noqa: PLC0415
+
+                transaction.on_commit(
+                    partial(
+                        close_report_tracker_issue.delay,
+                        report_id=str(report.id),
+                        team_id=team_id,
+                        completed=True,
+                        actor_user_id=None,
+                    )
+                )
         if decision != MonitoringAggregation.WAITING and decision != previous:
             SignalReportArtefact.add_log(
                 team_id=team_id,

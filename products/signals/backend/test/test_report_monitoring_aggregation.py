@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import timedelta
 from uuid import uuid4
@@ -14,6 +15,8 @@ from parameterized import parameterized
 
 from posthog.models import Team
 
+from products.signals.backend.artefact_attribution import ArtefactAttribution
+from products.signals.backend.artefact_schemas import CheckResult
 from products.signals.backend.models import (
     SignalReport,
     SignalReportArtefact,
@@ -60,6 +63,7 @@ class TestReportMonitoringAggregation(BaseTest):
         self.flag = self.enterContext(
             patch("products.signals.backend.report_content_gates.feature_enabled_or_false", return_value=True)
         )
+        self.close_tracker = self.enterContext(patch("products.signals.backend.tasks.close_report_tracker_issue.delay"))
         self.report = SignalReport.objects.create(
             team=self.team, status=SignalReport.Status.READY, title="Checkout recovery"
         )
@@ -110,6 +114,9 @@ class TestReportMonitoringAggregation(BaseTest):
 
     def test_all_members_must_pass_and_unsnapshotted_checks_cannot_hold_completion(self) -> None:
         extra = self._check()
+        historical = self._check()
+        historical.status = SignalReportCheck.Status.EXPIRED
+        historical.save(update_fields=["status"])
         with self.captureOnCommitCallbacks(execute=True):
             first = save_monitoring_result(self._evaluation(0))
         self.report.refresh_from_db()
@@ -133,9 +140,31 @@ class TestReportMonitoringAggregation(BaseTest):
         extra.refresh_from_db()
         assert extra.status == "cancelled"
         assert save_monitoring_result(final).id == second.id
-        assert SignalReportCheck.objects.for_team(self.team.id).filter(runs_remaining=3).count() == 3
+        assert SignalReportCheck.objects.for_team(self.team.id).filter(runs_remaining=3).count() == 4
+        historical.refresh_from_db()
+        assert historical.status == SignalReportCheck.Status.EXPIRED
+        self.close_tracker.assert_called_once_with(
+            report_id=str(self.report.id), team_id=self.team.id, completed=True, actor_user_id=None
+        )
 
     def test_failure_closes_immediately_and_records_research_intent_atomically(self) -> None:
+        earlier = SignalReportArtefact.add_log(
+            team_id=self.team.id,
+            report_id=str(self.report.id),
+            content=CheckResult(
+                check_id=str(self.checks[0].id),
+                kind=self.checks[0].kind,
+                title=self.checks[0].title,
+                outcome="passed",
+                explanation="An earlier observation passed.",
+            ),
+            attribution=ArtefactAttribution.system(),
+        )
+        SignalReportArtefact.objects.filter(id=earlier.id, team_id=self.team.id).update(
+            created_at=self.now - timedelta(hours=1)
+        )
+        self.checks[0].last_run_at = self.now - timedelta(hours=1)
+        self.checks[0].save(update_fields=["last_run_at"])
         self.checks[1].soak_minutes = 240
         self.checks[1].save(update_fields=["soak_minutes"])
         with self.captureOnCommitCallbacks(execute=True):
@@ -152,6 +181,14 @@ class TestReportMonitoringAggregation(BaseTest):
         assert self.checks[1].status == "cancelled"
         assert self._aggregate() == MonitoringAggregation.WAITING
         assert SignalReportArtefact.objects.filter(report=self.report, type="note").count() == 1
+        latest = SignalReportArtefact.objects.filter(report=self.report, type="check_result").latest("created_at")
+        content = json.loads(latest.content)
+        assert content["outcome"] == "failed"
+        assert content["explanation"] == self._evaluation(0, "failed").explanation
+        assert SignalReportArtefact.objects.filter(report=self.report, type="check_result").count() == 2
+        self.checks[0].refresh_from_db()
+        assert self.checks[0].last_run_at == self.now
+        self.close_tracker.assert_not_called()
 
     @parameterized.expand([("insufficient",), ("errored",)])
     def test_assessment_waits_for_settlement_and_is_requested_once(self, outcome: str) -> None:
