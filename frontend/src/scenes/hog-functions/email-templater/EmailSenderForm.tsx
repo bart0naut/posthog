@@ -8,6 +8,7 @@ import {
     SenderDataAttrPrefix,
     addressFromLocalPart,
     addressLocalPart,
+    isSingleTemplateExpression,
     selectedSenders,
     senderAddressError,
     sharedSenderDomain,
@@ -24,6 +25,7 @@ export function EmailSenderForm({
     dataAttrPrefix,
     onChangeFrom,
     onChangeReplyTo,
+    onClear,
     onDone,
 }: {
     from: EmailTemplateFrom
@@ -34,11 +36,13 @@ export function EmailSenderForm({
     dataAttrPrefix: SenderDataAttrPrefix
     onChangeFrom: (from: EmailTemplateFrom) => void
     onChangeReplyTo: (replyTo: string) => void
+    onClear: () => void
     onDone: () => void
 }): JSX.Element {
     const selected = selectedSenders(from, senders)
     const domain = sharedSenderDomain(selected)
     const localPart = addressLocalPart(from.email, domain)
+    const wholeAddressTemplate = !!domain && isSingleTemplateExpression(localPart)
     const single = selected.length === 1 ? selected[0] : undefined
     // Senders on different domains can only send from their own addresses.
     const mixedDomains = selected.length > 1 && !domain
@@ -84,9 +88,11 @@ export function EmailSenderForm({
                 help={
                     mixedDomains
                         ? 'Your senders are on different domains, so each one sends from its own address.'
-                        : single?.config?.email
-                          ? `Leave empty to send from ${single.config.email}.`
-                          : "Leave empty to send from each sender's own address."
+                        : wholeAddressTemplate
+                          ? `This value is used as the full address. To use it as the part before the @, add @${domain} after it.`
+                          : single?.config?.email
+                            ? `Leave empty to send from ${single.config.email}.`
+                            : "Leave empty to send from each sender's own address."
                 }
                 error={senderAddressError(from.email, selected)}
             >
@@ -97,7 +103,7 @@ export function EmailSenderForm({
                     placeholder={single?.config?.email?.split('@')[0] ?? 'Sender address'}
                     // A pasted full address already has its own domain, so the suffix would only confuse it.
                     suffix={
-                        domain && !localPart.includes('@') ? (
+                        domain && !localPart.includes('@') && !wholeAddressTemplate ? (
                             <span className="text-secondary">{`@${domain}`}</span>
                         ) : undefined
                     }
@@ -118,10 +124,7 @@ export function EmailSenderForm({
                     <LemonButton
                         type="tertiary"
                         size="small"
-                        onClick={() => {
-                            onChangeFrom({ ...from, name: undefined, email: undefined })
-                            onChangeReplyTo('')
-                        }}
+                        onClick={onClear}
                         data-attr={`${dataAttrPrefix}-custom-sender-clear`}
                     >
                         Clear
