@@ -435,8 +435,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
       '@posthog/react-native-plugin':
-        specifier: ^2.12.6
-        version: 2.12.6(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)
+        specifier: ^2.12.7
+        version: 2.12.7(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)
       '@posthog/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -547,7 +547,7 @@ importers:
         version: 3.0.3(react-native-svg@15.15.5(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6))(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)
       posthog-react-native:
         specifier: ^4.83.0
-        version: 4.83.0(7f9b9eac940620dd64b56959abca1524)
+        version: 4.83.0(5a456569a66f9751ccf88113ea856e5a)
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -6101,8 +6101,8 @@ packages:
       react-dom: 19.2.6
       tailwindcss: ^4.0.0
 
-  '@posthog/react-native-plugin@2.12.6':
-    resolution: {integrity: sha512-S8EHblTSRkVDVI8r9aeTp9btyYMB5A4RI3CROVuQLfntsT2y0/HVG+5lRRQhFvZeRQ0gPXwhDbUvkv/j9lHKOA==}
+  '@posthog/react-native-plugin@2.12.7':
+    resolution: {integrity: sha512-YnnVKC0+0yMgggjNLP+kEdXnPEgsIGip6xb32e6pT3L01kgZpOcs6Q10mjVD65ZhxQkBnC2FgbgQstZgJdNolw==}
     peerDependencies:
       react: 19.2.6
       react-native: '*'
@@ -21135,7 +21135,7 @@ snapshots:
       tailwind-merge: 2.6.1
       tailwindcss: 4.3.1
 
-  '@posthog/react-native-plugin@2.12.6(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)':
+  '@posthog/react-native-plugin@2.12.7(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)':
     dependencies:
       react: 19.2.6
       react-native: 0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1)
@@ -30769,12 +30769,12 @@ snapshots:
       '@opentelemetry/api': 1.9.1
       rxjs: 7.8.2
 
-  posthog-react-native@4.83.0(7f9b9eac940620dd64b56959abca1524):
+  posthog-react-native@4.83.0(5a456569a66f9751ccf88113ea856e5a):
     dependencies:
       '@posthog/core': 1.60.1
       '@posthog/types': 1.416.0
     optionalDependencies:
-      '@posthog/react-native-plugin': 2.12.6(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)
+      '@posthog/react-native-plugin': 2.12.7(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)
       '@react-native-async-storage/async-storage': 2.2.0(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))
       '@react-navigation/native': 7.1.28(react-native@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.6)(supports-color@8.1.1))(react@19.2.6)
       expo-application: 57.0.2(expo@57.0.8)
