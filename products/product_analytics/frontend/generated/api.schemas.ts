@@ -9517,7 +9517,10 @@ export interface InsightStoryRequestApi {
      * @maxLength 400
      */
     insight_name?: string
-    /** The chapters of the story in reading order. At most 8. */
+    /**
+     * The chapters of the story in reading order. At most 8.
+     * @maxItems 8
+     */
     chapters: InsightStoryChapterFactsApi[]
 }
 

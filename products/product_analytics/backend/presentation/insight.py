@@ -1656,8 +1656,8 @@ class InsightStoryRequestSerializer(serializers.Serializer):
         default="",
         help_text="Name of the insight. Blank for an insight that has no name yet.",
     )
-    chapters = InsightStoryChapterFactsSerializer(
-        many=True,
+    chapters = serializers.ListField(
+        child=InsightStoryChapterFactsSerializer(),
         allow_empty=False,
         max_length=INSIGHT_STORY_MAX_CHAPTERS,
         help_text=f"The chapters of the story in reading order. At most {INSIGHT_STORY_MAX_CHAPTERS}.",

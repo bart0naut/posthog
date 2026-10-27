@@ -1,7 +1,7 @@
 import type { TrendsQuery } from '~/queries/schema/schema-general'
 
 import { findChartMoments } from './chartMoments'
-import { evidenceForMoment } from './momentEvidence'
+import { buildEvidenceQueries, evidenceForMoment } from './momentEvidence'
 
 const days = (count: number): string[] =>
     Array.from({ length: count }, (_, index) => new Date(Date.UTC(2026, 8, 1 + index)).toISOString().slice(0, 10))
@@ -45,5 +45,19 @@ describe('explain chart moments', () => {
             }),
         ])
         expect(evidence[0].driverShare).toBeGreaterThan(0.8)
+    })
+
+    test.each([
+        ['total count', true, undefined],
+        ['sum', true, 'sum'],
+        ['unique users', false, 'dau'],
+        ['average', false, 'avg'],
+    ])('a %s chart is split to find a cause: %s', (_, splits, math) => {
+        const source = {
+            kind: 'TrendsQuery',
+            series: [{ kind: 'EventsNode', event: 'signed_up', math, math_property: math ? 'amount' : undefined }],
+        } as unknown as TrendsQuery
+
+        expect(!!buildEvidenceQueries(source, 0)).toBe(splits)
     })
 })

@@ -318,6 +318,8 @@ export const insightsStoryCreateBodyChaptersItemEvidenceItemMax = 600
 
 export const insightsStoryCreateBodyChaptersItemEvidenceMax = 6
 
+export const insightsStoryCreateBodyChaptersMax = 8
+
 export const InsightsStoryCreateBody = /* @__PURE__ */ zod.object({
     series_label: zod
         .string()
@@ -354,6 +356,7 @@ export const InsightsStoryCreateBody = /* @__PURE__ */ zod.object({
                     ),
             })
         )
+        .max(insightsStoryCreateBodyChaptersMax)
         .describe('The chapters of the story in reading order. At most 8.'),
 })
 

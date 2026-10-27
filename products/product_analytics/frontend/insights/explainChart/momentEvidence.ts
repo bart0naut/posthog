@@ -3,7 +3,7 @@ import { BREAKDOWN_NULL_STRING_LABEL, BREAKDOWN_OTHER_STRING_LABEL } from 'scene
 import { NodeKind } from '~/queries/schema/schema-general'
 import type { InsightVizNode, Node, TrendsQuery } from '~/queries/schema/schema-general'
 import { isActionsNode, isEventsNode, isTrendsQuery } from '~/queries/utils'
-import { BaseMathType, ChartDisplayType } from '~/types'
+import { BaseMathType, ChartDisplayType, PropertyMathType } from '~/types'
 import type { IntervalType } from '~/types'
 
 import { mark } from 'products/product_analytics/mcp/apps/explainChart/storyMarks'
@@ -69,7 +69,9 @@ export function buildEvidenceQueries(source: Node | null | undefined, seriesInde
     const hasFormula =
         !!trendsFilter?.formula || !!trendsFilter?.formulas?.length || !!trendsFilter?.formulaNodes?.length
     const node = source.series[seriesIndex]
-    if (hasBreakdown || hasFormula || (!isEventsNode(node) && !isActionsNode(node))) {
+    // A split explains a share of the change only when the values of its parts add up to the chart's value.
+    const additive = !node?.math || node.math === BaseMathType.TotalCount || node.math === PropertyMathType.Sum
+    if (hasBreakdown || hasFormula || !additive || (!isEventsNode(node) && !isActionsNode(node))) {
         return null
     }
     const base: TrendsQuery = {

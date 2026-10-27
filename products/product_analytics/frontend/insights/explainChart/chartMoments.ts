@@ -25,6 +25,9 @@ export interface MomentOptions {
 }
 
 const MAX_PEAKS = 2
+// ponytail: the change-of-level search sorts both sides at every split, so it is O(n² log n). Above this many points
+// it is skipped; an incremental median would lift the limit.
+const MAX_SHIFT_POINTS = 400
 const MIN_POINTS = 5
 /** A series with this share of empty points is compared with its active points only. */
 const SPARSE_SHARE = 0.3
@@ -181,7 +184,7 @@ function shiftMoment(
     options: MomentOptions
 ): ChartMoment | null {
     const edge = Math.max(3, Math.floor(values.length * 0.2))
-    if (base.sparse || values.length < edge * 2) {
+    if (base.sparse || values.length < edge * 2 || values.length > MAX_SHIFT_POINTS) {
         return null
     }
     // The split is where each side sits closest to its own median. A score of the gap alone ties along the step.
