@@ -41,6 +41,7 @@ import { INBOX_RANKING_SCORES, PRIORITY_TAG_TYPE, rankingScoreForHead } from '..
 import { SignalCard } from '../../SignalCard'
 import { EnrichedReviewer, SignalReportActionability, SignalReportPriority, SignalReportArtefact } from '../../types'
 import { dismissalReasonLabel } from '../../utils/dismissalReasons'
+import { prettifyScoutSkillName } from '../../utils/scoutRunsWindow'
 import { SignalReportActionabilityBadge } from '../badges/SignalReportActionabilityBadge'
 import { formatRankingLift, formatRankingProbability } from '../cards/rankingFormat'
 import { RankingLiftBar } from '../cards/RankingLiftBar'
@@ -70,6 +71,7 @@ import {
     RankingScoreView,
     readRankingScore,
     NoteContent,
+    ScoutNoteLeftContent,
     RelatedToContent,
     REPORT_LINK_KIND_LABELS,
     ReportLinkContent,
@@ -150,6 +152,7 @@ const ARTEFACT_MARKER: Record<string, ComponentType<{ className?: string }>> = {
     commit: IconCommit,
     task_run: IconTerminal,
     note: IconComment,
+    scout_note_left: IconPencil,
     priority_judgment: IconFlag,
     actionability_judgment: IconListCheck,
     safety_judgment: IconShield,
@@ -769,6 +772,17 @@ function renderArtefactBody({
         case 'note': {
             const c = content as NoteContent
             return <NoteBody note={c.note} author={c.author} />
+        }
+        case 'scout_note_left': {
+            const c = content as ScoutNoteLeftContent
+            return (
+                <div className="w-full">
+                    <span className="mb-1 block text-xs text-tertiary">
+                        {c.skill_name ? `For ${prettifyScoutSkillName(c.skill_name)}` : 'For every scout'}
+                    </span>
+                    <NoteBody note={c.note} />
+                </div>
+            )
         }
         case 'priority_judgment': {
             const c = content as { explanation?: string }
