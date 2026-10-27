@@ -54,6 +54,7 @@ from products.signals.backend.enums import (
     signal_source_product_choices,
 )
 from products.signals.backend.report_checks import MAX_CHECK_TITLE_LENGTH
+from products.signals.backend.report_monitoring_aggregation import MonitoringAggregation
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +357,7 @@ class SignalReport(UUIDModel):
         READY = "ready"
         MONITORING = "monitoring"
         RESOLVED = "resolved"
+        CLOSED = "closed", "Closed"
         FAILED = "failed"
         DELETED = "deleted"
         SUPPRESSED = "suppressed"
@@ -599,7 +601,7 @@ class SignalReport(UUIDModel):
                 self.status_before_suppression = None
                 updated_fields.add("status_before_suppression")
 
-            case (S.MONITORING, S.RESOLVED | S.READY):
+            case (S.MONITORING, S.RESOLVED | S.READY | S.CLOSED):
                 pass
 
             # Pipeline transitions
@@ -652,7 +654,14 @@ class SignalReport(UUIDModel):
 
             # Reset to potential (from in_progress via actionability judge, from suppressed, or by user snooze)
             case (
-                S.IN_PROGRESS | S.PENDING_INPUT | S.SUPPRESSED | S.READY | S.MONITORING | S.RESOLVED | S.FAILED,
+                S.IN_PROGRESS
+                | S.PENDING_INPUT
+                | S.SUPPRESSED
+                | S.READY
+                | S.MONITORING
+                | S.RESOLVED
+                | S.CLOSED
+                | S.FAILED,
                 S.POTENTIAL,
             ):
                 self.promoted_at = None
@@ -674,7 +683,7 @@ class SignalReport(UUIDModel):
             # before suppression. Title/summary/error are already set from the earlier research run,
             # so they are preserved as-is. In-flight states (candidate/in_progress) are never restored
             # here — they have no live workflow to resume and instead route back through POTENTIAL above.
-            case (S.SUPPRESSED, S.PENDING_INPUT | S.READY | S.RESOLVED | S.FAILED):
+            case (S.SUPPRESSED, S.PENDING_INPUT | S.READY | S.RESOLVED | S.CLOSED | S.FAILED):
                 self.status_before_suppression = None
                 updated_fields.add("status_before_suppression")
 
@@ -694,6 +703,7 @@ class SignalReport(UUIDModel):
                 | S.READY
                 | S.MONITORING
                 | S.RESOLVED
+                | S.CLOSED
                 | S.FAILED,
                 S.SUPPRESSED,
             ):
@@ -711,13 +721,14 @@ class SignalReport(UUIDModel):
                 | S.READY
                 | S.MONITORING
                 | S.RESOLVED
+                | S.CLOSED
                 | S.FAILED
                 | S.SUPPRESSED,
                 S.DELETED,
             ):
                 pass
 
-            case (S.RESOLVED, S.READY):
+            case (S.RESOLVED | S.CLOSED, S.READY):
                 pass
 
             # Only researched reports can resolve
@@ -725,7 +736,7 @@ class SignalReport(UUIDModel):
             # FAILED resolves too: a run that died in processing still describes real work, and
             # whoever fixed it needs a way to say so. Without this edge the only exit is a
             # dismissal, which used to make the report a sink for every later recurrence.
-            case (S.PENDING_INPUT | S.READY | S.FAILED, S.RESOLVED):
+            case (S.PENDING_INPUT | S.READY | S.FAILED | S.CLOSED, S.RESOLVED):
                 # Just pass through to status setting
                 pass
 
@@ -787,7 +798,7 @@ class SignalReport(UUIDModel):
         back through POTENTIAL to re-enter the pipeline.
         """
         S = self.Status
-        researched = {S.READY, S.PENDING_INPUT, S.RESOLVED, S.FAILED}
+        researched = {S.READY, S.PENDING_INPUT, S.RESOLVED, S.CLOSED, S.FAILED}
         prior = self.status_before_suppression
         if prior == S.MONITORING:
             return S.MONITORING if self._monitoring_enabled() else S.RESOLVED
@@ -1143,7 +1154,11 @@ class SignalReportAssignment(TeamScopedRootMixin, UUIDModel):
 
     @property
     def work_state(self) -> SignalReportWorkState:
-        if self.report.status in {SignalReport.Status.RESOLVED, SignalReport.Status.MONITORING}:
+        if self.report.status in {
+            SignalReport.Status.RESOLVED,
+            SignalReport.Status.CLOSED,
+            SignalReport.Status.MONITORING,
+        }:
             return SignalReportWorkState.DONE
         from products.signals.backend.implementation_pr import fetch_implementation_prs_for_reports
 
@@ -2623,6 +2638,12 @@ class SignalReportMonitoringAttempt(UUIDModel):
     report = models.ForeignKey(SignalReport, on_delete=models.CASCADE, related_name="monitoring_attempts")
     monitoring_started_at = models.DateTimeField()
     check_versions = models.JSONField(default=dict)
+    aggregation_state = models.CharField(max_length=24, choices=MonitoringAggregation, null=True, blank=True)
+    aggregation_result_ids = models.JSONField(null=True, blank=True)
+    aggregation_reason = models.TextField(null=True, blank=True)
+    aggregation_checked_at = models.DateTimeField(null=True, blank=True)
+    assessment_requested_at = models.DateTimeField(null=True, blank=True)
+    research_requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

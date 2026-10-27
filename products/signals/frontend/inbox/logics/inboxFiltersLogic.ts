@@ -321,7 +321,15 @@ export interface inboxFiltersLogicValues {
     sortDirection: InboxSortDirection
     sortField: InboxSortField
     sourceProductFilter: string[]
-    stateFilter: ('dismissed' | 'held-back' | 'monitoring' | 'needs-decision' | 'not-actionable' | 'resolved')[]
+    stateFilter: (
+        | 'closed'
+        | 'dismissed'
+        | 'held-back'
+        | 'monitoring'
+        | 'needs-decision'
+        | 'not-actionable'
+        | 'resolved'
+    )[]
     timeWindowAvailable: boolean
     visibleStateFilter: InboxReportSectionKey[]
 }
@@ -417,7 +425,7 @@ export interface inboxFiltersLogicActions {
         source: string
     }
     toggleState: (state: InboxReportSectionKey) => {
-        state: 'dismissed' | 'held-back' | 'monitoring' | 'needs-decision' | 'not-actionable' | 'resolved'
+        state: 'closed' | 'dismissed' | 'held-back' | 'monitoring' | 'needs-decision' | 'not-actionable' | 'resolved'
     }
 }
 

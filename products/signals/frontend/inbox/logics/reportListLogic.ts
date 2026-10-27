@@ -91,6 +91,7 @@ export const INBOX_REPORT_SECTION_LIST_PARAMS: Record<InboxReportSectionKey, Rep
     'needs-decision': { view: 'needs_decision' },
     // Fixed by a merged implementation PR, or resolved by a person. Terminal, not restorable.
     resolved: { status: 'resolved' },
+    closed: { status: 'closed' },
     // Dismissed by a person or agent, or suppressed because its PR closed without merging. Restorable.
     dismissed: { view: 'dismissed' },
     // Suppressed by the safety or actionability judge, with no dismissal from anyone.
