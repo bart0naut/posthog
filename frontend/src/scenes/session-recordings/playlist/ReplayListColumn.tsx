@@ -22,7 +22,6 @@ import { usePlayerMounted } from './usePlayerMounted'
 export interface ReplayListColumnProps {
     logicKey: string
     recordingsList: ReactNode
-    /** The What to watch list, when the picks experiment offers one. */
     picksList?: ReactNode
     picksMode: ReplayListPicksMode
     unwatchedPicksCount?: number
