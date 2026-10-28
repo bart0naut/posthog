@@ -29,6 +29,7 @@ from products.signals.backend.facade.onboarding import (
     onboarding_source_products,
     onboarding_source_types,
 )
+from products.signals.backend.models import InboxOnboardingSetupMode
 from products.signals.backend.presentation.scout_permissions import ScoutCanonicalTeamAccessPermission
 from products.signals.backend.presentation.scout_suggestion_serializers import ScoutSuggestionItemSerializer
 
@@ -37,24 +38,6 @@ class InboxOnboardingStep(models.TextChoices):
     SIGNALS = "signals", "Signals"
     SCOUTS = "scouts", "Scouts"
     GITHUB = "github", "GitHub"
-
-
-class InboxOnboardingSetupMode(models.TextChoices):
-    QUICK = "quick", "Quick"
-    GUIDED = "guided", "Guided"
-
-
-class InboxOnboardingVariant(models.TextChoices):
-    CONTROL = "control", "Control"
-    TEST_UI = "test-ui", "Focused steps"
-    TEST_GITHUB = "test-github", "Activate and explore"
-
-
-class InboxOnboardingExposureSerializer(serializers.Serializer):
-    variant = serializers.ChoiceField(
-        choices=InboxOnboardingVariant.choices,
-        help_text="Assigned experiment variant at the eligible Inbox impression.",
-    )
 
 
 class InboxOnboardingSourceSerializer(serializers.Serializer):
@@ -158,11 +141,6 @@ class InboxOnboardingStateSerializer(serializers.Serializer):
     jobs = InboxOnboardingJobsSerializer(required=False, help_text="Background work started by quick activation.")
     draft = InboxOnboardingDraftSerializer(allow_null=True, help_text="Saved setup choices, without activating them.")
     completed_at = serializers.DateTimeField(allow_null=True, help_text="When verified setup completed.")
-    variant = serializers.ChoiceField(
-        choices=InboxOnboardingVariant.choices,
-        allow_null=True,
-        help_text="Variant recorded at the first eligible impression.",
-    )
 
 
 class InboxOnboardingPermission(BasePermission):
@@ -213,14 +191,10 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
             lambda write: self._check_suggestion_access(self.request, write=write),
         )
 
-    @extend_schema(request=InboxOnboardingExposureSerializer, responses=InboxOnboardingStateSerializer)
+    @extend_schema(request=None, responses=InboxOnboardingStateSerializer)
     @action(detail=False, methods=["POST"])
     def expose(self, request: Request, *args: object, **kwargs: object) -> Response:
-        serializer = InboxOnboardingExposureSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        if serializer.validated_data["variant"] == InboxOnboardingVariant.CONTROL:
-            self._check_scout_access(request)
-        return Response(self._service().expose(serializer.validated_data["variant"]))
+        return Response(self._service().expose())
 
     @extend_schema(responses=InboxOnboardingStateSerializer)
     def list(self, request: Request, *args: object, **kwargs: object) -> Response:

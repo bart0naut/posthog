@@ -76,8 +76,7 @@ class TestInboxOnboarding(APIBaseTest):
         assert self.source.enabled is False
         assert SignalTeamConfig.objects.get(team=self.team).autostart_enabled is None
 
-    @parameterized.expand([("control",), ("test-ui",), ("test-github",)])
-    def test_exposure_is_sticky_and_queued_once(self, variant: str) -> None:
+    def test_exposure_is_recorded_once(self) -> None:
         with (
             patch("posthog.event_usage.posthoganalytics.capture") as capture,
             patch(
@@ -85,17 +84,17 @@ class TestInboxOnboarding(APIBaseTest):
             ) as flag,
             self.captureOnCommitCallbacks(execute=True),
         ):
-            first = self.client.post(f"{self.url}expose/", {"variant": variant}, format="json")
-            second = self.client.post(
-                f"{self.url}expose/", {"variant": "test-ui" if variant == "control" else "control"}, format="json"
-            )
-        assert first.status_code == 200
-        assert first.json()["variant"] == variant
-        assert second.json()["variant"] == variant
+            first = self.client.post(f"{self.url}expose/")
+            second = self.client.post(f"{self.url}expose/")
+        assert first.status_code == 200, first.json()
+        assert first.json() == second.json()
         assert capture.call_count == 1
-        assert capture.call_args.kwargs["properties"]["variant"] == variant
-        assert capture.call_args.kwargs["properties"]["$feature/inbox-ui-onboarding"] == variant
+        assert capture.call_args.kwargs["properties"]["setup_mode"] is None
         assert capture.call_args.kwargs["properties"]["self_driving_ubp"] is True
+        state = SignalTeamConfig.objects.get(team=self.team).onboarding
+        assert state is not None
+        assert state["exposed_by"] == self.user.pk
+        assert "variant" not in state
         assert capture.call_args.kwargs["properties"]["$set_once"] == {"email": self.user.email}
         assert capture.call_args.kwargs["groups"]["project"] == str(self.team.uuid)
         assert capture.call_args.kwargs["groups"]["organization"] == str(self.organization.id)
@@ -133,30 +132,25 @@ class TestInboxOnboarding(APIBaseTest):
 
     @parameterized.expand(
         [
-            (None, False, None, None),
-            ("control", False, None, None),
-            ("control", False, None, "quick"),
-            ("test-ui", False, None, None),
-            ("test-ui", False, "test-sol", None),
-            ("test-ui", False, "control", None),
-            ("test-github", False, None, None),
-            ("test-github", False, None, "guided"),
-            ("test-github", True, "test-sol", None),
+            (None, False, None),
+            ("guided", False, None),
+            ("guided", False, "test-sol"),
+            ("guided", False, "control"),
+            ("quick", False, None),
+            ("quick", True, "test-sol"),
         ]
     )
     def test_completion_is_durable_and_retry_safe(
-        self, variant: str | None, automatic_implementation: bool, arm: str | None, setup_mode: str | None
+        self, setup_mode: str | None, automatic_implementation: bool, arm: str | None
     ) -> None:
         self.draft["automatic_implementation"] = automatic_implementation
         if setup_mode:
             self.draft["setup_mode"] = setup_mode
-        has_scout = variant == "test-github" and automatic_implementation
+        quick = setup_mode == "quick"
+        has_scout = quick and automatic_implementation
         if has_scout:
             self.draft["suggestions"] = [self.suggestion]
             SignalScoutConfig.objects.create(team=self.team, skill_name=self.scout_skill_name, enabled=True, emit=True)
-        config = SignalTeamConfig.objects.get(team=self.team)
-        config.onboarding = {"variant": variant}
-        config.save()
         with (
             patch(
                 "products.signals.backend.onboarding_completion.InboxOnboardingReconciler.has_repository",
@@ -180,19 +174,13 @@ class TestInboxOnboarding(APIBaseTest):
         assert first.json() == second.json()
         config = SignalTeamConfig.objects.get(team=self.team)
         assert config.onboarding is not None
-        if variant == "test-github":
-            assert config.onboarding["jobs"] == {"scout": "pending", "recommendations": "pending"}
-            assert {call.args for call in launch.call_args_list} == {
-                (self.team.id, "scout"),
-                (self.team.id, "recommendations"),
-            }
-        elif variant == "test-ui" and arm:
-            assert config.onboarding["jobs"] == {"scout": "pending", "recommendations": "skipped"}
-            assert {call.args for call in launch.call_args_list} == {(self.team.id, "scout")}
-        else:
-            launch.assert_not_called()
-        if variant in ("test-ui", "test-github"):
-            assert config.onboarding.get("first_report_variant") == arm
+        assert config.onboarding["jobs"] == {
+            "scout": "pending" if arm or quick else "skipped",
+            "recommendations": "pending" if quick else "skipped",
+        }
+        pending_jobs = {job for job, status in config.onboarding["jobs"].items() if status == "pending"}
+        assert {call.args for call in launch.call_args_list} == {(self.team.id, job) for job in pending_jobs}
+        assert config.onboarding.get("first_report_variant") == arm
         assert bool(first.json().get("first_report")) is (arm == "test-sol")
         assert config.autostart_enabled is automatic_implementation
         assert config.default_autostart_priority == "P1"
@@ -200,15 +188,12 @@ class TestInboxOnboarding(APIBaseTest):
         notification = SignalFirstReportNotification.objects.for_team(self.team.id).get()
         assert notification.activated_by_id == self.user.id
         assert notification.queued_at is None
-        assert capture.call_args.kwargs["properties"]["variant"] == variant
         assert capture.call_args.kwargs["properties"] == {
             "$set_once": {"email": self.user.email},
-            "variant": variant,
-            "$feature/inbox-ui-onboarding": variant,
             "project_id": self.team.id,
             "flow_version": "ui-first-v1",
             "inbox_client": "cloud",
-            "setup_mode": setup_mode or ("quick" if variant == "test-github" else "guided"),
+            "setup_mode": setup_mode or "guided",
             "self_driving_ubp": not automatic_implementation,
             "automatic_implementation": automatic_implementation,
             "implementation_priority": "P1",
@@ -230,7 +215,6 @@ class TestInboxOnboarding(APIBaseTest):
         self.draft["suggestions"] = [self.suggestion]
         config = SignalTeamConfig.objects.get(team=self.team)
         config.onboarding = {
-            "variant": "test-github",
             "completed_at": timezone.now().isoformat(),
             "draft": self.draft,
             "jobs": {"scout": "failed", "recommendations": "failed"},
@@ -278,7 +262,7 @@ class TestInboxOnboarding(APIBaseTest):
         self, parent_access: bool, selection: str, expected_status: int
     ) -> None:
         child = Team.objects.create(organization=self.organization, parent_team=self.team, name="Child")
-        SignalTeamConfig.objects.create(team=child, onboarding={"variant": "test-ui"})
+        SignalTeamConfig.objects.create(team=child)
         SignalSourceConfig.objects.create(
             team=child, source_product="error_tracking", source_type="issue_created", enabled=True
         )
@@ -411,10 +395,7 @@ class TestInboxOnboarding(APIBaseTest):
             self.client.get(f"/api/projects/{child.id}/signals/onboarding/", HTTP_AUTHORIZATION=f"Bearer {raw}")
             if action == "read"
             else self.client.post(
-                f"/api/projects/{child.id}/signals/onboarding/{action}/",
-                {"variant": "control"},
-                format="json",
-                HTTP_AUTHORIZATION=f"Bearer {raw}",
+                f"/api/projects/{child.id}/signals/onboarding/{action}/", HTTP_AUTHORIZATION=f"Bearer {raw}"
             )
         )
         assert response.status_code == 403, response.content
@@ -501,7 +482,6 @@ class TestInboxOnboarding(APIBaseTest):
         activated_at = timezone.now()
         config, _ = SignalTeamConfig.objects.get_or_create(team=team)
         config.onboarding = {
-            "variant": "test-github",
             "completed_at": activated_at.isoformat(),
             "jobs": {"scout": "started", "recommendations": "started"},
         }
@@ -534,7 +514,6 @@ class TestInboxOnboardingActivation(BaseTest):
         config = SignalTeamConfig.objects.create(
             team=self.team,
             onboarding={
-                "variant": "test-ui",
                 "first_report_variant": "test-sol",
                 "completed_at": timezone.now().isoformat(),
                 "activated_by": self.user.pk,
@@ -613,7 +592,7 @@ class TestInboxOnboardingActivation(BaseTest):
         config = SignalTeamConfig.objects.create(
             team=self.team,
             onboarding={
-                "variant": "test-github",
+                "draft": {"setup_mode": "quick"},
                 "first_report_variant": arm,
                 "completed_at": timezone.now().isoformat(),
                 "activated_by": self.user.pk,
@@ -713,7 +692,6 @@ class TestInboxOnboardingActivation(BaseTest):
         config = SignalTeamConfig.objects.create(
             team=self.team,
             onboarding={
-                "variant": "test-github",
                 "completed_at": timezone.now().isoformat(),
                 "jobs": {"scout": "pending", "recommendations": "pending"},
             },

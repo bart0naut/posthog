@@ -19,9 +19,8 @@ class RepositoryCheckUnavailable(APIException):
 
 
 class InboxOnboardingReconciler:
-    def __init__(self, team_id: int, *, priority: Priority = Priority.NORMAL) -> None:
+    def __init__(self, team_id: int) -> None:
         self.team_id = team_id
-        self.priority = priority
 
     @staticmethod
     def scouts_can_emit(team_id: int) -> bool:
@@ -32,7 +31,7 @@ class InboxOnboardingReconciler:
     def has_repository(self) -> bool:
         failure: Exception | None = None
         for integration in Integration.objects.filter(team_id=self.team_id, kind="github").order_by("id"):
-            github = GitHubIntegration(integration, source="signals_onboarding", priority=self.priority)
+            github = GitHubIntegration(integration, source="signals_onboarding", priority=Priority.NORMAL)
             try:
                 repositories, _ = github.list_repositories(per_page=1)
             except (GitHubIntegrationError, GitHubRateLimitError, EgressBudgetExhausted, RequestException) as error:

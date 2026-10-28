@@ -1413,20 +1413,6 @@ export interface InboxOnboardingDraftApi {
     implementation_priority: AutonomyPriorityEnumApi
 }
 
-/**
- * * `control` - Control
- * * `test-ui` - Focused steps
- * * `test-github` - Activate and explore
- */
-export type InboxOnboardingVariantEnumApi =
-    (typeof InboxOnboardingVariantEnumApi)[keyof typeof InboxOnboardingVariantEnumApi]
-
-export const InboxOnboardingVariantEnumApi = {
-    Control: 'control',
-    TestUi: 'test-ui',
-    TestGithub: 'test-github',
-} as const
-
 export interface InboxOnboardingStateApi {
     /** Whether the current user can receive an in-app notification when this investigation finishes. */
     first_report_completion_notification?: boolean
@@ -1446,21 +1432,6 @@ export interface InboxOnboardingStateApi {
      * @nullable
      */
     completed_at: string | null
-    /** Variant recorded at the first eligible impression.
-     *
-     * * `control` - Control
-     * * `test-ui` - Focused steps
-     * * `test-github` - Activate and explore */
-    variant: InboxOnboardingVariantEnumApi | null
-}
-
-export interface InboxOnboardingExposureApi {
-    /** Assigned experiment variant at the eligible Inbox impression.
-     *
-     * * `control` - Control
-     * * `test-ui` - Focused steps
-     * * `test-github` - Activate and explore */
-    variant: InboxOnboardingVariantEnumApi
 }
 
 export interface PauseStateResponseApi {
