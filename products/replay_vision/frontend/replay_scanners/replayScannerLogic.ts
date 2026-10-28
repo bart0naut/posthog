@@ -440,8 +440,12 @@ export interface GoalDraftRequest {
     spend: GoalDraftSpend
     templateKey?: string
     experimentId?: number
-    /** Entry point that started the draft, recorded on the creation-started event. */
-    source?: string
+}
+
+/** The in-app surface a scanner was started from, kept only when it is a slug the create API accepts,
+ * so a telemetry value can never block a save. */
+function scannerEntryPoint(value: unknown): string | null {
+    return typeof value === 'string' && /^[a-z0-9_]{1,64}$/.test(value) ? value : null
 }
 
 export interface GoalSpendChoice {
@@ -523,11 +527,13 @@ export interface replayScannerLogicValues {
     creditLimitState: CreditLimitState
     creditLimitUnit: CreditLimitUnit
     durationValidationError: string | null
+    entryPoint: string | null
     estimateRequestVersion: number
     experimentContext: ExperimentScannerContext | null
     experimentContextLinked: boolean
     goalBudgetInput: number | null
     goalDraft: DraftScannerResponseApi | null
+    goalDraftExperimentId: number | null
     goalDraftInput: string
     goalDraftLoading: boolean
     goalDraftQuery: RecordingsQuery | null
@@ -776,6 +782,9 @@ export interface replayScannerLogicActions {
     setCreditLimitUnit: (unit: CreditLimitUnit) => {
         unit: CreditLimitUnit
     }
+    setEntryPoint: (entryPoint: string | null) => {
+        entryPoint: string | null
+    }
     setExperimentContext: (context: ExperimentScannerContext | null) => {
         context: ExperimentScannerContext | null
     }
@@ -788,7 +797,11 @@ export interface replayScannerLogicActions {
     setGoalDraftInput: (goal: string) => {
         goal: string
     }
-    setGoalDraftQuery: (query: RecordingsQuery | null) => {
+    setGoalDraftQuery: (
+        query: RecordingsQuery | null,
+        experimentId?: number | null
+    ) => {
+        experimentId: number | null
         query: RecordingsQuery | null
     }
     setGoalSpendMode: (mode: GoalSpendMode) => {
@@ -1039,7 +1052,11 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
         setGoalDraftInput: (goal: string) => ({ goal }),
         setGoalBudgetInput: (budget: number | null) => ({ budget }),
         setGoalSpendMode: (mode: GoalSpendMode) => ({ mode }),
-        setGoalDraftQuery: (query: RecordingsQuery | null) => ({ query }),
+        setGoalDraftQuery: (query: RecordingsQuery | null, experimentId: number | null = null) => ({
+            query,
+            experimentId,
+        }),
+        setEntryPoint: (entryPoint: string | null) => ({ entryPoint }),
         loadObservations: (background = false) => ({ background }),
         loadObservationsSuccess: (observations: ReplayObservationApi[], total: number) => ({ observations, total }),
         loadObservationsFailure: true,
@@ -1188,7 +1205,11 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                         // about that, so the update payload below leaves it out.
                         const response = await visionScannersCreate(
                             String(teamId),
-                            scannerToApiBody({ ...body, creation_method: values.creationMethod })
+                            scannerToApiBody({
+                                ...body,
+                                creation_method: values.creationMethod,
+                                entry_point: values.entryPoint,
+                            })
                         )
                         actions.scannerSaved(scanner)
                         leaveScannerEditor(props.id, urls.replayVision(response.id))
@@ -1279,7 +1300,7 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                         ...('freeOnly' in spend
                             ? { free_only: true }
                             : { monthly_credit_budget: spend.monthlyCreditBudget }),
-                        experiment_id: experimentId,
+                        experiment_id: experimentId ?? values.goalDraftExperimentId ?? undefined,
                         ...(values.goalDraftQuery ? { query: values.goalDraftQuery } : {}),
                     })
                 },
@@ -1335,6 +1356,27 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
             {
                 setGoalDraftQuery: (_, { query }) => query,
                 startFromScratch: () => null,
+                discardScannerDraft: () => null,
+                scannerSaved: () => null,
+            },
+        ],
+        // The experiment those recordings were scoped to. A RecordingsQuery cannot carry exposure, so
+        // without this a retry would widen past the experiment's participants.
+        goalDraftExperimentId: [
+            null as number | null,
+            {
+                setGoalDraftQuery: (_, { experimentId }) => experimentId,
+                startFromScratch: () => null,
+                discardScannerDraft: () => null,
+                scannerSaved: () => null,
+            },
+        ],
+        // Kept through a path switch, since a person who opens the AI flow from an entry point and then
+        // builds by hand still started there.
+        entryPoint: [
+            null as string | null,
+            {
+                setEntryPoint: (_, { entryPoint }) => entryPoint,
                 discardScannerDraft: () => null,
                 scannerSaved: () => null,
             },
@@ -2004,6 +2046,12 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                     // unrelated wizard visit.
                     const handoff = consumeScannerHandoffIntent()
                     const armedGoal = consumeScannerGoalDraftIntent()
+                    const entryPoint = scannerEntryPoint(
+                        handoff?.source ?? armedGoal?.source ?? router.values.searchParams.entry_point
+                    )
+                    if (entryPoint) {
+                        actions.setEntryPoint(entryPoint)
+                    }
                     // Prefill precedence: a cross-product hand-off (a whole scanner, armed by an
                     // in-tab click moments before navigation), then an experiment deep link, then
                     // an explicit ?filters= query (both carry fully built state), then a saved
@@ -2026,6 +2074,9 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                     if ('filters' in nextParams) {
                         delete nextParams.filters
                     }
+                    if ('entry_point' in nextParams) {
+                        delete nextParams.entry_point
+                    }
                     if (Object.keys(nextParams).length !== Object.keys(router.values.searchParams).length) {
                         router.actions.replace(router.values.location.pathname, nextParams, router.values.hashParams)
                     }
@@ -2034,6 +2085,7 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                             creation_method: 'handoff',
                             template_key: null,
                             source: handoff.source,
+                            entry_point: values.entryPoint,
                         })
                         // Same fresh-intent rule as the experiment deep link: the hand-off was
                         // armed by a click moments before navigation, so it outranks a saved
@@ -2127,7 +2179,7 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                     if (armedGoal && !hasFiltersPrefill && consented && !values.goalDraftLoading) {
                         actions.setGoalDraftInput(armedGoal.goal)
                         if (armedGoal.query) {
-                            actions.setGoalDraftQuery(armedGoal.query)
+                            actions.setGoalDraftQuery(armedGoal.query, armedGoal.experimentId ?? null)
                         }
                         if (armedGoal.spend) {
                             // Mirrored into the goal page's controls, so a failed draft offers the same choice again.
@@ -2149,7 +2201,6 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                                 goal: armedGoal.goal,
                                 spend,
                                 experimentId: armedGoal.experimentId,
-                                source: armedGoal.source,
                             })
                         }
                     }
@@ -2289,12 +2340,12 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
             },
 
             // Fires on request rather than result, so failed drafts still count as entering the AI path.
-            draftScannerFromGoal: ({ request: { goal, templateKey, spend, source } }) => {
+            draftScannerFromGoal: ({ request: { goal, templateKey, spend } }) => {
                 posthog.capture('replay_vision_scanner_creation_started', {
                     creation_method: 'ai',
                     // Set when a goal starter card wrote the goal, so the funnel can split typed goals from one-click ones.
                     template_key: templateKey ?? null,
-                    source: source ?? null,
+                    entry_point: values.entryPoint,
                     query_pinned: !!values.goalDraftQuery,
                     spend_mode: 'freeOnly' in spend ? 'free' : 'budget',
                     // The goal is customer text, so only its length is captured.
@@ -2421,6 +2472,7 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                 posthog.capture('replay_vision_scanner_creation_started', {
                     creation_method: 'scratch',
                     template_key: null,
+                    entry_point: values.entryPoint,
                 })
                 clearScannerDraft()
                 actions.setScannerDraftSavedAt(null)
