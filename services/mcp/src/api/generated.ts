@@ -11185,9 +11185,19 @@ export namespace Schemas {
     } as const;
 
     /**
+     * The period that this insight's query covered, with both ends resolved to timestamps. Null when the insight has no result yet or its query type does not report the range.
      * @nullable
      */
     export type InsightResolvedDateRange = {
+      readonly date_from?: string;
+      readonly date_to?: string;
+    } | null;
+
+    /**
+     * The earlier period that this insight's query compared against, with both ends resolved to timestamps. Only trends insights fill it. Null when comparison is off, when the insight has no result yet, and for other insight types.
+     * @nullable
+     */
+    export type InsightResolvedCompareDateRange = {
       readonly date_from?: string;
       readonly date_to?: string;
     } | null;
@@ -11289,8 +11299,16 @@ export namespace Schemas {
       readonly hogql: string | null;
       /** @nullable */
       readonly types: readonly unknown[] | null;
-      /** @nullable */
+      /**
+         * The period that this insight's query covered, with both ends resolved to timestamps. Null when the insight has no result yet or its query type does not report the range.
+         * @nullable
+         */
       readonly resolved_date_range: InsightResolvedDateRange;
+      /**
+         * The earlier period that this insight's query compared against, with both ends resolved to timestamps. Only trends insights fill it. Null when comparison is off, when the insight has no result yet, and for other insight types.
+         * @nullable
+         */
+      readonly resolved_compare_date_range: InsightResolvedCompareDateRange;
       /** What ClickHouse read for this insight's last slow run, with the findings of its query scan. */
       readonly query_scan: unknown;
       /** Warnings from the run that produced these results. A `warehouse_sync` warning means the query read a data warehouse table whose sync failed, is paused, or is overdue, so the results can be out of date. Reflects the sync state when the results were computed. Null for shared insights. */
@@ -88071,9 +88089,19 @@ export namespace Schemas {
     }
 
     /**
+     * The period that this insight's query covered, with both ends resolved to timestamps. Null when the insight has no result yet or its query type does not report the range.
      * @nullable
      */
     export type PatchedInsightResolvedDateRange = {
+      readonly date_from?: string;
+      readonly date_to?: string;
+    } | null;
+
+    /**
+     * The earlier period that this insight's query compared against, with both ends resolved to timestamps. Only trends insights fill it. Null when comparison is off, when the insight has no result yet, and for other insight types.
+     * @nullable
+     */
+    export type PatchedInsightResolvedCompareDateRange = {
       readonly date_from?: string;
       readonly date_to?: string;
     } | null;
@@ -88175,8 +88203,16 @@ export namespace Schemas {
       readonly hogql?: string | null;
       /** @nullable */
       readonly types?: readonly unknown[] | null;
-      /** @nullable */
+      /**
+         * The period that this insight's query covered, with both ends resolved to timestamps. Null when the insight has no result yet or its query type does not report the range.
+         * @nullable
+         */
       readonly resolved_date_range?: PatchedInsightResolvedDateRange;
+      /**
+         * The earlier period that this insight's query compared against, with both ends resolved to timestamps. Only trends insights fill it. Null when comparison is off, when the insight has no result yet, and for other insight types.
+         * @nullable
+         */
+      readonly resolved_compare_date_range?: PatchedInsightResolvedCompareDateRange;
       /** What ClickHouse read for this insight's last slow run, with the findings of its query scan. */
       readonly query_scan?: unknown;
       /** Warnings from the run that produced these results. A `warehouse_sync` warning means the query read a data warehouse table whose sync failed, is paused, or is overdue, so the results can be out of date. Reflects the sync state when the results were computed. Null for shared insights. */
