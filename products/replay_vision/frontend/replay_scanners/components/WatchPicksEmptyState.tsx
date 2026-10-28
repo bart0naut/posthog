@@ -11,6 +11,7 @@ import { resolveWatchFeedEmptyReason } from '../watchFeedEmptyState'
 import { WatchPicksBlockedState } from './WatchPicksBlockedState'
 import { WatchPicksQuietState } from './WatchPicksQuietState'
 import { WatchPicksReplayOffState } from './WatchPicksReplayOffState'
+import { WatchPicksShadowPreview } from './WatchPicksShadowPreview'
 import { WatchPicksStarter } from './WatchPicksStarter'
 
 export function WatchPicksEmptyState({ size }: { size: 'small' | 'large' }): JSX.Element {
@@ -33,7 +34,12 @@ export function WatchPicksEmptyState({ size }: { size: 'small' | 'large' }): JSX
         return <WatchPicksReplayOffState size={size} />
     }
     if (reason === 'no-scanners') {
-        return <WatchPicksStarter size={size} />
+        return (
+            <>
+                <WatchPicksShadowPreview />
+                <WatchPicksStarter size={size} />
+            </>
+        )
     }
     if (reason === 'all-disabled' || reason === 'all-capped' || reason === 'quota-exhausted') {
         return <WatchPicksBlockedState reason={reason} size={size} />
