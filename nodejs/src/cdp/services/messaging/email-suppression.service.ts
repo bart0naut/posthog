@@ -33,15 +33,15 @@ export function emailSuppressionConfigFromEnv(): EmailSuppressionConfig {
 }
 
 export type SuppressionCheckOptions = {
-    // A spam complaint means the recipient doesn't want our mail, not that the address can't receive it.
-    // Transactional email (login codes, password resets) still goes out to it. Bounce and manual entries block it.
+    // Transactional email (invoices, login codes, password resets) is blocked only by a hard bounce, because
+    // only then is the address proven dead. A complaint, a manual entry or a full inbox (soft bounces) lets it through.
     transactional?: boolean
 }
 
-// An active suppression. A COMPLAINT row keeps its source when the address later bounces, so its bounce
-// count decides whether it blocks transactional email: it does once the count reaches the soft-bounce
-// threshold. A hard bounce sets the count to the threshold.
+// An active suppression. It blocks transactional email only when the address hard-bounced.
 type SuppressionEntry = { blocksTransactional: boolean }
+
+const HARD_BOUNCE_REASON = 'Auto-suppressed after a hard bounce'
 
 /**
  * Per-team email suppression list, backed by `posthog_messagesuppression`.
@@ -196,15 +196,13 @@ export class EmailSuppressionService {
         }
 
         const diag = diagnostic ? diagnostic.slice(0, DIAGNOSTIC_MAX_LENGTH) : null
-        const reason = 'Auto-suppressed after a hard bounce'
-
-        // Params: teamId, reason, diag, threshold, then one identifier per row.
+        // Params: teamId, reason, diag, then one identifier per row.
         const valueClauses: string[] = []
-        const params: (number | string | null)[] = [teamId, reason, diag, this.threshold]
+        const params: (number | string | null)[] = [teamId, HARD_BOUNCE_REASON, diag]
         identifiers.forEach((identifier, i) => {
             const p = params.length + 1 + i
             valueClauses.push(
-                `(gen_random_uuid(), $1, $${p}, 'BOUNCE', $2, 0, NOW(), $3, true, NOW(), false, NOW(), NOW())`
+                `(gen_random_uuid(), $1, $${p}, 'BOUNCE', $2, 0, NOW(), $3, true, NOW(), false, NOW(), NOW(), NOW())`
             )
         })
         params.push(...identifiers)
@@ -212,7 +210,8 @@ export class EmailSuppressionService {
         const query = `
             INSERT INTO posthog_messagesuppression
                 (id, team_id, identifier, source, reason, transient_bounce_count, last_bounce_at,
-                 last_bounce_diagnostic, suppressed, suppressed_at, deleted, created_at, updated_at)
+                 last_bounce_diagnostic, suppressed, suppressed_at, deleted, created_at, updated_at,
+                 hard_bounced_at)
             VALUES ${valueClauses.join(', ')}
             ON CONFLICT (team_id, identifier) DO UPDATE SET
                 last_bounce_at = NOW(),
@@ -225,12 +224,9 @@ export class EmailSuppressionService {
                     WHEN posthog_messagesuppression.source = 'MANUAL' THEN posthog_messagesuppression.suppressed_at
                     WHEN posthog_messagesuppression.suppressed = false THEN NOW()
                     ELSE posthog_messagesuppression.suppressed_at END,
-                -- A COMPLAINT row keeps its source, so the count records the bounce. At the threshold the
-                -- row also blocks transactional email, because the address can't receive mail.
-                transient_bounce_count = CASE
-                    WHEN posthog_messagesuppression.source = 'COMPLAINT'
-                        THEN GREATEST(posthog_messagesuppression.transient_bounce_count, $4)
-                    ELSE posthog_messagesuppression.transient_bounce_count END,
+                -- Set on every row, manual and complaint entries included: the address can't receive
+                -- mail, so transactional email must stop too.
+                hard_bounced_at = NOW(),
                 -- A complaint outranks a bounce as the reason a row exists, so it keeps its reason
                 -- here the way a manual entry does. This upsert never reassigns the source, so
                 -- overwriting the reason on a COMPLAINT row would leave the two contradicting each
@@ -274,9 +270,9 @@ export class EmailSuppressionService {
             ? `Auto-suppressed after a spam complaint (feedback type: ${feedbackType.slice(0, 100)})`
             : 'Auto-suppressed after a spam complaint'
 
-        // Params: teamId, reason, threshold, then one identifier per row.
+        // Params: teamId, reason, then one identifier per row.
         const valueClauses: string[] = []
-        const params: (number | string | null)[] = [teamId, reason, this.threshold]
+        const params: (number | string | null)[] = [teamId, reason]
         identifiers.forEach((identifier, i) => {
             const p = params.length + 1 + i
             valueClauses.push(
@@ -296,14 +292,6 @@ export class EmailSuppressionService {
                 source = CASE
                     WHEN posthog_messagesuppression.source = 'MANUAL' THEN posthog_messagesuppression.source
                     ELSE 'COMPLAINT' END,
-                -- An address that a bounce already suppressed can't receive mail, so the re-keyed row
-                -- keeps a count at the threshold and still blocks transactional email.
-                transient_bounce_count = CASE
-                    WHEN posthog_messagesuppression.source = 'BOUNCE'
-                        AND posthog_messagesuppression.suppressed
-                        AND NOT posthog_messagesuppression.deleted
-                        THEN GREATEST(posthog_messagesuppression.transient_bounce_count, $3)
-                    ELSE posthog_messagesuppression.transient_bounce_count END,
                 suppressed = CASE
                     WHEN posthog_messagesuppression.source = 'MANUAL' THEN posthog_messagesuppression.suppressed
                     ELSE true END,
@@ -334,8 +322,7 @@ export class EmailSuppressionService {
 
     /**
      * Record successful deliveries. Resets the consecutive-bounce counter for auto (non-manual)
-     * entries that haven't yet been suppressed, so a transient outage never accumulates. COMPLAINT
-     * entries reset too, because their counter decides whether they block transactional email.
+     * entries that haven't yet been suppressed, so a transient outage never accumulates.
      *
      * `deliveryTimestamp` guards against out-of-order events: SES delivery and bounce notifications
      * for different sends can arrive in any order, and a late delivery for an older send must not
@@ -358,9 +345,7 @@ export class EmailSuppressionService {
             WHERE team_id = $1
               AND identifier = ANY($2)
               AND source <> 'MANUAL'
-              -- A COMPLAINT row stays suppressed, but its count decides whether it blocks transactional
-              -- email, and a delivery proves the address works again.
-              AND (suppressed = false OR source = 'COMPLAINT')
+              AND suppressed = false
               AND transient_bounce_count > 0
               AND (last_bounce_at IS NULL OR ($3::timestamptz IS NOT NULL AND last_bounce_at < $3::timestamptz))
         `
@@ -402,15 +387,17 @@ export class EmailSuppressionService {
 
         const entries = new Map<string, SuppressionEntry>()
         for (const [teamId, identifiers] of byTeam) {
+            // The reason check covers rows that hard-bounced before `hard_bounced_at` existed.
             const result = await this.postgres.query<{ identifier: string; blocks_transactional: boolean }>(
                 PostgresUse.COMMON_READ,
-                `SELECT identifier, (source <> 'COMPLAINT' OR transient_bounce_count >= $3) AS blocks_transactional
+                `SELECT identifier,
+                        (hard_bounced_at IS NOT NULL OR (source = 'BOUNCE' AND reason = $3)) AS blocks_transactional
                  FROM posthog_messagesuppression
                  WHERE team_id = $1
                    AND identifier = ANY($2)
                    AND suppressed = true
                    AND deleted = false`,
-                [teamId, identifiers, this.threshold],
+                [teamId, identifiers, HARD_BOUNCE_REASON],
                 'loadSuppressed'
             )
             for (const row of result.rows) {
