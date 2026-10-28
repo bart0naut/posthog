@@ -15,6 +15,7 @@ export function InboxSetupActions(): JSX.Element {
             <InboxQuickSetupAction />
             <div data-attr="inbox-welcome-set-up-manually" className="self-start">
                 <Link
+                    subtle
                     className="inline-flex items-center font-semibold"
                     onClick={continueFromWelcome}
                     disabled={saving}
