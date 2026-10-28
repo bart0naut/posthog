@@ -430,7 +430,7 @@ export type CreditLimitUnit = 'credits' | 'observations'
 export type GoalSpendMode = 'free' | 'budget'
 
 // Prefills the typed budget at the free monthly credits (FREE_TIER_MONTHLY_CREDITS in backend/billing.py).
-const DEFAULT_GOAL_BUDGET = 2500
+export const DEFAULT_GOAL_BUDGET = 2500
 
 /** The spend a goal draft is sized to. The server sizes a free-only draft to the free credits it can spend. */
 export type GoalDraftSpend = { freeOnly: true } | { monthlyCreditBudget: number }
@@ -440,6 +440,8 @@ export interface GoalDraftRequest {
     spend: GoalDraftSpend
     templateKey?: string
     experimentId?: number
+    /** Entry point that started the draft, recorded on the creation-started event. */
+    source?: string
 }
 
 export interface GoalSpendChoice {
@@ -528,6 +530,7 @@ export interface replayScannerLogicValues {
     goalDraft: DraftScannerResponseApi | null
     goalDraftInput: string
     goalDraftLoading: boolean
+    goalDraftQuery: RecordingsQuery | null
     goalSpendMode: GoalSpendMode
     hasActiveObservationFilters: boolean
     hasObservationsInFlight: boolean
@@ -785,6 +788,9 @@ export interface replayScannerLogicActions {
     setGoalDraftInput: (goal: string) => {
         goal: string
     }
+    setGoalDraftQuery: (query: RecordingsQuery | null) => {
+        query: RecordingsQuery | null
+    }
     setGoalSpendMode: (mode: GoalSpendMode) => {
         mode: GoalSpendMode
     }
@@ -1033,6 +1039,7 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
         setGoalDraftInput: (goal: string) => ({ goal }),
         setGoalBudgetInput: (budget: number | null) => ({ budget }),
         setGoalSpendMode: (mode: GoalSpendMode) => ({ mode }),
+        setGoalDraftQuery: (query: RecordingsQuery | null) => ({ query }),
         loadObservations: (background = false) => ({ background }),
         loadObservationsSuccess: (observations: ReplayObservationApi[], total: number) => ({ observations, total }),
         loadObservationsFailure: true,
@@ -1273,6 +1280,7 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                             ? { free_only: true }
                             : { monthly_credit_budget: spend.monthlyCreditBudget }),
                         experiment_id: experimentId,
+                        ...(values.goalDraftQuery ? { query: values.goalDraftQuery } : {}),
                     })
                 },
             },
@@ -1318,6 +1326,17 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
             'free' as GoalSpendMode,
             {
                 setGoalSpendMode: (_, { mode }) => mode,
+            },
+        ],
+        // Recordings the person already chose, for example in the replay filters. Kept through a failed
+        // draft so a retry from the goal page still watches them, rather than whatever the agent picks.
+        goalDraftQuery: [
+            null as RecordingsQuery | null,
+            {
+                setGoalDraftQuery: (_, { query }) => query,
+                startFromScratch: () => null,
+                discardScannerDraft: () => null,
+                scannerSaved: () => null,
             },
         ],
         // Starting from scratch replaces the drafted form, so its rationale no longer describes the config.
@@ -2106,15 +2125,32 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
                     }
                     const consented = !!organizationLogic.values.currentOrganization?.is_ai_data_processing_approved
                     if (armedGoal && !hasFiltersPrefill && consented && !values.goalDraftLoading) {
-                        actions.setGoalDraftInput(armedGoal)
-                        const { spend } = goalSpendChoice(
-                            values.goalSpendMode,
-                            values.goalBudgetInput,
-                            visionQuotaLogic.findMounted()?.values.freeCreditsLeft ?? null
-                        )
+                        actions.setGoalDraftInput(armedGoal.goal)
+                        if (armedGoal.query) {
+                            actions.setGoalDraftQuery(armedGoal.query)
+                        }
+                        if (armedGoal.spend) {
+                            // Mirrored into the goal page's controls, so a failed draft offers the same choice again.
+                            actions.setGoalSpendMode('freeOnly' in armedGoal.spend ? 'free' : 'budget')
+                            if ('monthlyCreditBudget' in armedGoal.spend) {
+                                actions.setGoalBudgetInput(armedGoal.spend.monthlyCreditBudget)
+                            }
+                        }
+                        const spend =
+                            armedGoal.spend ??
+                            goalSpendChoice(
+                                values.goalSpendMode,
+                                values.goalBudgetInput,
+                                visionQuotaLogic.findMounted()?.values.freeCreditsLeft ?? null
+                            ).spend
                         // With no budget to size it to, the goal stays in the box for the person to finish.
                         if (spend) {
-                            actions.draftScannerFromGoal({ goal: armedGoal, spend })
+                            actions.draftScannerFromGoal({
+                                goal: armedGoal.goal,
+                                spend,
+                                experimentId: armedGoal.experimentId,
+                                source: armedGoal.source,
+                            })
                         }
                     }
                     return
@@ -2253,11 +2289,13 @@ export const replayScannerLogic = kea<replayScannerLogicType>([
             },
 
             // Fires on request rather than result, so failed drafts still count as entering the AI path.
-            draftScannerFromGoal: ({ request: { goal, templateKey, spend } }) => {
+            draftScannerFromGoal: ({ request: { goal, templateKey, spend, source } }) => {
                 posthog.capture('replay_vision_scanner_creation_started', {
                     creation_method: 'ai',
                     // Set when a goal starter card wrote the goal, so the funnel can split typed goals from one-click ones.
                     template_key: templateKey ?? null,
+                    source: source ?? null,
+                    query_pinned: !!values.goalDraftQuery,
                     spend_mode: 'freeOnly' in spend ? 'free' : 'budget',
                     // The goal is customer text, so only its length is captured.
                     goal_length: goal.trim().length,
