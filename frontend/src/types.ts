@@ -1039,7 +1039,7 @@ export const TOOLBAR_USER_INTENTS = [
     'edit-product-tour',
     'preview-product-tour',
 ] as const satisfies readonly ToolbarUserIntent[]
-export type ToolbarSource = 'url' | 'localstorage'
+export type ToolbarSource = 'url' | 'localstorage' | 'extension'
 export type ToolbarVersion = 'toolbar'
 
 export type ExperimentIdType = number | 'new' | 'web'
@@ -5342,6 +5342,8 @@ export type EventOrPropType = EventDefinition & PropertyDefinition
 export interface AppContext {
     /** The page left out the user's data, and the app fetches it at boot. See lib/utils/deferredAppContext. */
     deferred?: boolean
+    /** The user's variant in the deferred app context experiment. Absent outside the experiment. */
+    deferred_app_context_variant?: string
     run_mode?: 'US' | 'EU' | 'DEV' | 'E2E' | 'LOCAL' | 'HOBBY'
     current_user: UserType | null
     current_project: ProjectType | null
@@ -6343,9 +6345,6 @@ export interface DataModelingEdge {
     id: string
     source_id: string
     target_id: string
-    properties: Record<string, unknown>
-    created_at: string
-    updated_at: string
 }
 
 export type DataModelingSyncInterval = '15min' | '30min' | '1hour' | '6hour' | '12hour' | '24hour' | '7day' | '30day'
