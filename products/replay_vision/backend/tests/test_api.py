@@ -1597,6 +1597,7 @@ class TestScannerLifecycleTelemetry(_VisionAPITestCase):
                     "scanner_config": {"prompt": "did checkout complete?"},
                     "model": ScannerModel.GEMINI_3_8_FLASH,
                     "creation_method": claimed,
+                    "entry_point": "replay_filters",
                 },
                 format="json",
                 **headers,
@@ -1607,8 +1608,12 @@ class TestScannerLifecycleTelemetry(_VisionAPITestCase):
             call for call in capture.call_args_list if call.kwargs.get("event") == "replay_vision_scanner_created"
         ]
         self.assertEqual(created[0].kwargs["properties"]["creation_method"], expected)
-        # Telemetry only: it must not reach the model, whose constructor would reject it.
-        self.assertFalse(hasattr(ReplayScanner.objects.get(id=resp.json()["id"]), "creation_method"))
+        # The entry point is what lets each in-app surface be measured by the scanners it produces.
+        self.assertEqual(created[0].kwargs["properties"]["entry_point"], "replay_filters")
+        # Telemetry only: neither may reach the model, whose constructor would reject them.
+        scanner = ReplayScanner.objects.get(id=resp.json()["id"])
+        self.assertFalse(hasattr(scanner, "creation_method"))
+        self.assertFalse(hasattr(scanner, "entry_point"))
 
     def test_create_without_a_request_reports_the_declared_surface(self) -> None:
         # Max reaches the serializer directly, so there is no request to derive a surface from and
@@ -1646,13 +1651,14 @@ class TestScannerLifecycleTelemetry(_VisionAPITestCase):
         with patch("posthoganalytics.capture") as capture:
             resp = self.client.patch(
                 f"{self.scanners_url}{scanner.id}/",
-                data={"name": "renamed", "creation_method": "template"},
+                data={"name": "renamed", "creation_method": "template", "entry_point": "replay_filters"},
                 format="json",
             )
 
         self.assertEqual(resp.status_code, 200, resp.json())
         edited = [call for call in capture.call_args_list if call.kwargs.get("event") == "replay_vision_scanner_edited"]
         self.assertNotIn("creation_method", edited[0].kwargs["properties"])
+        self.assertNotIn("entry_point", edited[0].kwargs["properties"])
 
     @parameterized.expand(
         [
