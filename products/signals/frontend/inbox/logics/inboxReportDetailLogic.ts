@@ -1639,6 +1639,7 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
                 surface: 'detail_pane',
             })
             const scene = inboxSceneLogic.findMounted()
+            const startedAt = Date.now()
             let updated: SignalReportApi | null = null
             try {
                 updated = await signalsReportsClaim(
@@ -1680,7 +1681,7 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
             if (scene?.values.selectedReportId === props.reportId) {
                 scene.actions.seedSelectedReport(report)
             }
-            inboxBulkActionsLogic.findMounted()?.actions.reportClaimChanged(props.reportId, updated.assignee)
+            inboxBulkActionsLogic.findMounted()?.actions.reportClaimChanged(props.reportId, updated.assignee, startedAt)
             actions.loadReportArtefacts()
             actions.setClaimSaving(false)
         },
