@@ -66,6 +66,35 @@ import { scoutFleetLogic } from './scoutFleetLogic'
 import type { SignalScoutConfig } from './scoutFleetLogic'
 import { scoutSuggestionsLogic } from './scoutSuggestionsLogic'
 
+// pinned: browser storage key - a rename drops the marker mid-redirect, so the return shows the button instead.
+const GITHUB_CONNECT_STORAGE_KEY_PREFIX = 'inbox-quick-setup-github-connect'
+
+function githubConnectStorageKey(teamId: number | null): string {
+    return `${GITHUB_CONNECT_STORAGE_KEY_PREFIX}.${teamId ?? 'none'}`
+}
+
+// The GitHub return URL carries `onboarding_step=quick`, and anyone can send a link with it. The marker proves this
+// tab left for GitHub from the Connect button, so only that return activates without another click. It is consumed
+// on read, so a reload after the return shows the button instead of activating again.
+function markGithubConnectStarted(teamId: number | null): void {
+    try {
+        window.sessionStorage.setItem(githubConnectStorageKey(teamId), '1')
+    } catch {
+        // Without storage the return shows an enabled Activate button, which is the safe direction to fail.
+    }
+}
+
+function takeGithubConnectMarker(teamId: number | null): boolean {
+    try {
+        const key = githubConnectStorageKey(teamId)
+        const started = window.sessionStorage.getItem(key) === '1'
+        window.sessionStorage.removeItem(key)
+        return started
+    } catch {
+        return false
+    }
+}
+
 /** A first-report state the progress card still shows. A created report shows as a row in the report list instead. */
 export interface FirstReportProgressState extends FirstReportStateApi {
     status: Exclude<FirstReportStateApi['status'], 'report_created'>
@@ -666,7 +695,8 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
     }),
     sharedListeners(({ actions, values }) => ({
         // The welcome screen loads the source inventory only when activation is requested, so a click can arrive before
-        // the quick draft can be built. Every load the draft depends on re-enters here until it activates or fails.
+        // the quick draft can be built. Every load the draft depends on re-enters here when it settles, failures
+        // included, because a failed refresh keeps its previous value and must not leave the click spinning.
         continueQuickActivation: () => {
             const activationSource = values.pendingQuickActivation
             if (!activationSource || values.error || values.saving || values.completed) {
@@ -856,7 +886,9 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
             [signalSourcesLogic.actionTypes.loadVisionScannersSuccess]: sharedListeners.continueQuickActivation,
             [signalSourcesLogic.actionTypes.loadProductDataEventsSuccess]: sharedListeners.continueQuickActivation,
             [integrationsLogic.actionTypes.loadIntegrationsSuccess]: sharedListeners.continueQuickActivation,
+            [integrationsLogic.actionTypes.loadIntegrationsFailure]: sharedListeners.continueQuickActivation,
             [scoutFleetLogic.actionTypes.loadScoutConfigsSuccess]: sharedListeners.continueQuickActivation,
+            [scoutFleetLogic.actionTypes.loadScoutConfigsFailure]: sharedListeners.continueQuickActivation,
             [scoutFleetLogic.actionTypes.syncScoutFleetSuccess]: sharedListeners.continueQuickActivation,
             [signalSourcesLogic.actionTypes.loadSourceConfigsFailure]: () => {
                 actions.setError('Could not load signal sources. Try again.', 'sources')
@@ -898,6 +930,7 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 actions.setError(null)
                 try {
                     await saveDraft()
+                    markGithubConnectStarted(values.currentTeamId)
                     window.location.assign(url)
                 } catch {
                     actions.setError(
@@ -1000,8 +1033,7 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 }
             },
             resumeQuickSetup: () => {
-                if (values.shouldResumeQuickSetup && !cache.quickSetupResumed) {
-                    cache.quickSetupResumed = true
+                if (values.shouldResumeQuickSetup && takeGithubConnectMarker(values.currentTeamId)) {
                     actions.activateQuickSetup('github_return')
                 }
             },
@@ -1010,11 +1042,9 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                     return
                 }
                 if (!values.quickSetupReady || !values.hasGithubIntegration) {
-                    actions.setError(null)
                     actions.setPendingQuickActivation(activationSource)
-                    if (!values.started) {
-                        actions.startSetup()
-                    }
+                    // Restart every prerequisite load: one that already failed would never re-enter the continuation.
+                    actions.startSetup()
                     return
                 }
                 router.actions.replace(urls.inbox(), { onboarding_step: 'quick' })

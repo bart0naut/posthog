@@ -50,7 +50,37 @@ describe('focused Inbox setup', () => {
     let completedAt: string | null
     let scanners: { id: string; enabled: boolean; emits_signals: boolean }[]
 
+    function generalScoutConfig(): SignalScoutConfigApi {
+        return {
+            ...mockScoutConfigs[0],
+            skill_name: 'signals-scout-general',
+            enabled: false,
+            scout_origin: 'canonical',
+        }
+    }
+
+    async function connectGithubFromWelcome(): Promise<void> {
+        const originalLocation = window.location
+        Object.defineProperty(window, 'location', {
+            value: { ...originalLocation, assign: jest.fn() },
+            configurable: true,
+        })
+        try {
+            await expectLogic(logic, () =>
+                logic.actions.connectGithub('https://github.com/apps/example/installations/new')
+            ).toFinishAllListeners()
+            expect(window.location.assign).toHaveBeenCalledWith('https://github.com/apps/example/installations/new')
+        } finally {
+            Object.defineProperty(window, 'location', { value: originalLocation, configurable: true })
+        }
+    }
+
+    function activationRequests(capture: jest.SpyInstance): unknown[][] {
+        return capture.mock.calls.filter(([event]) => event === 'self-driving onboarding activation requested')
+    }
+
     beforeEach(() => {
+        window.sessionStorage.clear()
         initKeaTests()
         savedDraft = { ...draft }
         variant = 'test-ui'
@@ -208,14 +238,7 @@ describe('focused Inbox setup', () => {
                 savedImplementation === null ? null : { ...draft, automatic_implementation: savedImplementation }
             failCompletion = false
             hasEvents = true
-            canonicalScouts = [
-                {
-                    ...mockScoutConfigs[0],
-                    skill_name: 'signals-scout-general',
-                    enabled: false,
-                    scout_origin: 'canonical',
-                },
-            ]
+            canonicalScouts = [generalScoutConfig()]
             const refresh = jest.spyOn(signalsApi, 'signalsScoutSuggestionsRefresh')
             await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
             expect(inventoryRequests).toBe(0)
@@ -224,6 +247,7 @@ describe('focused Inbox setup', () => {
                 expect(logic.values.savedState?.draft?.automatic_implementation).toBe(savedImplementation)
             }
             if (entry === 'github_return') {
+                await connectGithubFromWelcome()
                 router.actions.replace(router.values.location.pathname, { onboarding_step: 'quick' })
                 await waitFor(() => expect(logic.values.shouldResumeQuickSetup).toBe(true))
                 logic.actions.resumeQuickSetup()
@@ -246,10 +270,7 @@ describe('focused Inbox setup', () => {
             )
             expect(router.values.searchParams.onboarding_step).toBeUndefined()
             expect(refresh).not.toHaveBeenCalled()
-            const requests = capture.mock.calls.filter(
-                ([event]) => event === 'self-driving onboarding activation requested'
-            )
-            expect(requests).toEqual([
+            expect(activationRequests(capture)).toEqual([
                 [
                     'self-driving onboarding activation requested',
                     expect.objectContaining({
@@ -280,12 +301,7 @@ describe('focused Inbox setup', () => {
         savedDraft = null
         failCompletion = false
         hasEvents = true
-        const generalScout = {
-            ...mockScoutConfigs[0],
-            skill_name: 'signals-scout-general',
-            enabled: false,
-            scout_origin: 'canonical' as const,
-        }
+        const generalScout = generalScoutConfig()
         canonicalScouts = failure === 'scouts' ? [] : [generalScout]
         let sourcesUnavailable = failure === 'sources'
         useMocks({
@@ -312,12 +328,104 @@ describe('focused Inbox setup', () => {
         logic.actions.retry()
         await waitFor(() => expect(logic.values.completed).toBe(true))
         expect(logic.values.error).toBeNull()
-        expect(
-            capture.mock.calls.filter(([event]) => event === 'self-driving onboarding activation requested')
-        ).toEqual([
+        expect(activationRequests(capture)).toEqual([
             [
                 'self-driving onboarding activation requested',
                 expect.objectContaining({ activation_source: 'retry', setup_mode: 'quick' }),
+            ],
+        ])
+    })
+
+    it('does not activate from a quick-setup link unless this tab started the GitHub connection', async () => {
+        const capture = jest.spyOn(posthog, 'capture')
+        savedDraft = null
+        failCompletion = false
+        hasEvents = true
+        canonicalScouts = [generalScoutConfig()]
+        await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
+        router.actions.replace(router.values.location.pathname, { onboarding_step: 'quick' })
+        await waitFor(() => expect(logic.values.shouldResumeQuickSetup).toBe(true))
+        await expectLogic(logic, () => logic.actions.resumeQuickSetup()).toFinishAllListeners()
+        expect(logic.values.quickActivationPending).toBe(false)
+        expect(logic.values.completed).toBe(false)
+        expect(inventoryRequests).toBe(0)
+        expect(activationRequests(capture)).toEqual([])
+        logic.actions.activateQuickSetup()
+        await waitFor(() => expect(logic.values.completed).toBe(true))
+        expect(activationRequests(capture)).toEqual([
+            ['self-driving onboarding activation requested', expect.objectContaining({ activation_source: 'button' })],
+        ])
+    })
+
+    it('reloads the onboarding state on every retry after it failed to load', async () => {
+        const capture = jest.spyOn(posthog, 'capture')
+        savedDraft = null
+        failCompletion = false
+        hasEvents = true
+        canonicalScouts = [generalScoutConfig()]
+        let onboardingUnavailable = true
+        useMocks({
+            get: {
+                '/api/projects/:id/signals/onboarding/': () =>
+                    onboardingUnavailable
+                        ? [503, { detail: 'Unavailable' }]
+                        : [200, { draft: savedDraft, completed_at: completedAt, variant }],
+            },
+        })
+        await expectLogic(logic).toFinishAllListeners()
+        logic.unmount()
+        logic = inboxSetupLogic()
+        logic.mount()
+        await expectLogic(logic).toFinishAllListeners()
+        expect(logic.values.error).toBeTruthy()
+        expect(logic.values.savedState).toBeNull()
+        logic.actions.activateQuickSetup('retry')
+        expect(logic.values.quickActivationPending).toBe(true)
+        await waitFor(() => expect(logic.values.error).toBeTruthy())
+        expect(logic.values.quickActivationPending).toBe(false)
+        await waitFor(() =>
+            expect(
+                logic.values.refreshingSources || logic.values.integrationsLoading || logic.values.scoutConfigsLoading
+            ).toBe(false)
+        )
+        onboardingUnavailable = false
+        logic.actions.activateQuickSetup('retry')
+        expect(logic.values.quickActivationPending).toBe(true)
+        await waitFor(() => expect(logic.values.completed).toBe(true))
+        expect(activationRequests(capture)).toEqual([
+            ['self-driving onboarding activation requested', expect.objectContaining({ activation_source: 'retry' })],
+        ])
+    })
+
+    it('activates when the integration refresh fails after the inventory loaded', async () => {
+        const capture = jest.spyOn(posthog, 'capture')
+        savedDraft = null
+        failCompletion = false
+        hasEvents = true
+        canonicalScouts = [generalScoutConfig()]
+        let failIntegrations: (() => void) | undefined
+        const integrationsResponse = new Promise<[number, { detail: string }]>((resolve) => {
+            failIntegrations = () => resolve([503, { detail: 'Unavailable' }])
+        })
+        await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
+        useMocks({ get: { '/api/projects/:id/integrations/': () => integrationsResponse } })
+        logic.actions.activateQuickSetup()
+        expect(logic.values.quickActivationPending).toBe(true)
+        await waitFor(() => {
+            expect(logic.values.scoutFleetSynced).toBe(true)
+            expect(logic.values.refreshingSources).toBe(false)
+            expect(logic.values.scoutConfigsLoading).toBe(false)
+            expect(logic.values.quickSetupDraft).not.toBeNull()
+        })
+        expect(logic.values.integrationsLoading).toBe(true)
+        expect(logic.values.completed).toBe(false)
+        failIntegrations!()
+        await waitFor(() => expect(logic.values.completed).toBe(true))
+        expect(logic.values.hasGithubIntegration).toBe(true)
+        expect(activationRequests(capture)).toEqual([
+            [
+                'self-driving onboarding activation requested',
+                expect.objectContaining({ activation_source: 'button', github_connected: true }),
             ],
         ])
     })
