@@ -33,12 +33,20 @@ class OpenFgaStatus:
 
 @dataclass(frozen=True, kw_only=True)
 class Resource:
-    """One resource, or with `id=None` every resource of `type`, for list and create checks."""
+    """One resource, or with `id=None` every resource of `type`, for list and create checks.
+
+    `created_by_id` and `parent_id` are the facts the current access rules read from the object:
+    the creator's user id, and the id of the parent it falls back to, such as a warehouse table's
+    source. `parent_id=None` means the object has no parent. A resource built without the creator
+    gives the creator no extra access, so build it from the model when the model is at hand.
+    """
 
     type: ResourceType
     id: str | None = None
     project_id: int | None = None
     organization_id: UUID | None = None
+    created_by_id: int | None = None
+    parent_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
