@@ -537,6 +537,38 @@ class TestDraftScannerEndpoint(_VisionAPITestCase):
 
     @parameterized.expand(
         [
+            (
+                "comment search",
+                {
+                    "comment_text": {
+                        "type": "recording",
+                        "key": "comment_text",
+                        "value": "checkout",
+                        "operator": "icontains",
+                    }
+                },
+                "comment_text",
+            ),
+            ("hide viewed recordings", {"hide_viewed_recordings": "current-user"}, "hide_viewed_recordings"),
+            ("experiment exposure", {"experiment_exposure": {"experiment_id": 1}}, "experiment_id"),
+        ]
+    )
+    @patch(_GENERATE_PATH)
+    def test_a_chosen_query_the_scanner_cannot_apply_is_refused(self, _name, extra, named, mock_generate):
+        # A scanner never applies these, so drafting with them would watch and budget for recordings the
+        # person excluded.
+        resp = self.client.post(
+            self.draft_url,
+            data={"goal": "find rage clicks", "free_only": True, "query": {"kind": "RecordingsQuery", **extra}},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST, resp.json()
+        assert named in str(resp.json())
+        mock_generate.assert_not_called()
+
+    @parameterized.expand(
+        [
             ("free name kept", [], "User intent"),
             ("taken name suffixed", ["User intent"], "User intent (2)"),
             ("next free suffix", ["User intent", "User intent (2)"], "User intent (3)"),

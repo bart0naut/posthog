@@ -199,6 +199,8 @@ from products.signals.backend.facade.api import get_outcomes_for_signal_source_s
 
 # Date is set by the schedule at trigger time, not by the user — strip on save.
 _QUERY_FIELDS_TO_STRIP = ("date_from", "date_to")
+# Recording filters only the replay list API resolves. A scanner's own queries ignore them.
+_REPLAY_LIST_ONLY_QUERY_FIELDS = ("comment_text", "hide_viewed_recordings")
 
 
 class ScannerCreationMethod(models.TextChoices):
@@ -2175,6 +2177,17 @@ class DraftScannerRequestSerializer(serializers.Serializer):
     )
 
     def validate_query(self, value: dict[str, Any]) -> dict[str, Any]:
+        # The replay list API resolves these itself, and a scanner never applies them. Kept, the draft would
+        # watch and budget for more recordings than the person chose.
+        unsupported = [key for key in _REPLAY_LIST_ONLY_QUERY_FIELDS if value.get(key)]
+        if unsupported:
+            raise serializers.ValidationError(
+                f"A scanner can't keep these recording filters: {', '.join(unsupported)}. Remove them and try again."
+            )
+        if value.get("experiment_exposure") is not None:
+            raise serializers.ValidationError(
+                "Pass the experiment as `experiment_id` instead of as experiment exposure inside `query`."
+            )
         return _validated_candidate_query(value)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:

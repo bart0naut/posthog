@@ -873,7 +873,9 @@ def _build_user_content(
                 source=(
                     "the recording filter the user already chose, as a RecordingsQuery. The scanner watches "
                     "only new recordings that match it, or every new recording when it has no filters. Leave "
-                    "every filter_ field empty and write the scanner for these recordings"
+                    "every other filter_ field empty, but still set filter_experiment and "
+                    "filter_experiment_variant when the goal names an experiment or one of its variants, and "
+                    "write the scanner for these recordings"
                 ),
             )
         )
@@ -1877,7 +1879,7 @@ def draft_scanner_from_goal(
         name=_free_scanner_name(team.id, draft.name),
         credit_limit=None if free_only else monthly_credit_budget,
         free_only=free_only,
-        **({"query": pinned_query} if pinned_query is not None else {}),
+        query=pinned_query if pinned_query is not None else draft.query,
     )
 
     def solve(query: dict[str, Any] | None) -> _BudgetSolution:
