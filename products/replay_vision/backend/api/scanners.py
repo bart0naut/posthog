@@ -254,6 +254,21 @@ def _reject_direct_experiment_exposure(query: dict[str, Any]) -> None:
 _MAX_DESCRIPTION_LENGTH = 1_000
 _MAX_QUERY_BYTES = 50_000
 
+
+def _validated_candidate_query(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate an unsaved `RecordingsQuery` the way a saved scanner's would be, minus the date range a schedule owns."""
+    try:
+        RecordingsQuery.model_validate(value)
+    except PydanticValidationError:
+        raise serializers.ValidationError("Recording filter is invalid.")
+    _reject_direct_experiment_exposure(value)
+    if len(json.dumps(value, separators=(",", ":")).encode()) > _MAX_QUERY_BYTES:
+        raise serializers.ValidationError(
+            f"Recording filter is too large. Keep it under {_MAX_QUERY_BYTES // 1000} KB."
+        )
+    return {k: v for k, v in value.items() if k not in _QUERY_FIELDS_TO_STRIP}
+
+
 # Each tag costs get_or_create round trips in set_tags_on_object, so cap the list.
 _MAX_TAGS = 32
 
@@ -1621,12 +1636,7 @@ class EstimateRequestSerializer(serializers.Serializer):
         return attrs
 
     def validate_query(self, value: dict[str, Any]) -> dict[str, Any]:
-        try:
-            RecordingsQuery.model_validate(value)
-        except PydanticValidationError:
-            raise serializers.ValidationError("Recording filter is invalid.")
-        _reject_direct_experiment_exposure(value)
-        return {k: v for k, v in value.items() if k not in _QUERY_FIELDS_TO_STRIP}
+        return _validated_candidate_query(value)
 
 
 class ScannerTypeStatsSerializer(serializers.Serializer):
@@ -2137,6 +2147,20 @@ class DraftScannerRequestSerializer(serializers.Serializer):
             "The draft is then an `experiment` scanner on it."
         ),
     )
+    query = extend_schema_field(RecordingsQuery)(  # type: ignore[arg-type, type-var]
+        serializers.JSONField(
+            required=False,
+            help_text=(
+                "A `RecordingsQuery` the person already chose, for example from the replay filters. The draft "
+                "keeps it as the scanner's `query` and sizes the sampling dials against it, instead of drafting "
+                "its own filter. A query with no filters watches every new recording. `date_from`/`date_to` are "
+                "dropped, because a scanner's schedule owns time. Omit to let the draft pick the sessions."
+            ),
+        )
+    )
+
+    def validate_query(self, value: dict[str, Any]) -> dict[str, Any]:
+        return _validated_candidate_query(value)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         has_budget = attrs.get("monthly_credit_budget") is not None
@@ -3488,6 +3512,7 @@ class ReplayScannerViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, vi
             "team_id": self.team_id,
             "monthly_credit_budget": monthly_credit_budget,
             "free_only": free_only,
+            "query_pinned": "query" in body.validated_data,
         }
         # Scoped tokens must not receive data their scopes exclude. Core memory is INTERNAL
         # (session-only), so any scoped token loses it; the goal-based entity grounding (surveys,
@@ -3513,6 +3538,7 @@ class ReplayScannerViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, vi
                 allowed_scopes=allowed_scopes,
                 experiment_id=experiment_id,
                 free_only=free_only,
+                pinned_query=body.validated_data.get("query"),
             )
         except UnwatchableExperimentError:
             raise ValidationError(

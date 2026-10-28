@@ -11,6 +11,7 @@ re-validates everything on save.
 """
 
 import re
+import json
 import time
 import uuid
 import functools
@@ -788,6 +789,7 @@ def _build_user_content(
     cohorts: Sequence[_MatchedCohort] = (),
     experiments: Sequence[_MatchedExperiment] = (),
     pinned_experiment: _MatchedExperiment | None = None,
+    pinned_query: dict[str, Any] | None = None,
     business_context: str = "",
     company: str = "",
 ) -> str:
@@ -859,6 +861,19 @@ def _build_user_content(
                     "the team's saved actions whose names match the goal, each with the sessions it "
                     "fired in recently. Each is a curated definition of a behavior; copy a name into "
                     "filter_actions to scan only sessions containing it"
+                ),
+            )
+        )
+    if pinned_query is not None:
+        lines.append(
+            "\n"
+            + as_untrusted_data(
+                "chosen-recordings",
+                [json.dumps(pinned_query, separators=(",", ":"), sort_keys=True)],
+                source=(
+                    "the recording filter the user already chose, as a RecordingsQuery. The scanner watches "
+                    "only new recordings that match it, or every new recording when it has no filters. Leave "
+                    "every filter_ field empty and write the scanner for these recordings"
                 ),
             )
         )
@@ -1719,9 +1734,13 @@ def draft_scanner_from_goal(
     allowed_scopes: list[str] | None = None,
     experiment_id: int | None = None,
     free_only: bool = False,
+    pinned_query: dict[str, Any] | None = None,
 ) -> ScannerDraft:
     """Ground the goal in the team's real pages, draft the whole scanner in one
     model call, then solve the sampling dials from the stated monthly credit budget.
+
+    `pinned_query` is a recording filter the user already chose. The draft keeps it as the query and
+    sizes the dials against it, so the grounding reads that only serve the drafted filter are skipped.
 
     `free_only` drafts a scanner that runs only on the organization's free credits. The caller then
     passes those free credits as `monthly_credit_budget`, and the draft carries no credit limit.
@@ -1808,7 +1827,8 @@ def draft_scanner_from_goal(
         # session. Offered without a count instead, the way an unmeasured event reads.
         survey_events = [replace(c, sessions=None) if c.sessions == 0 else c for c in measure(injected)]
 
-    _run_concurrently([read_pages, read_goal_events, read_entities], thread_name_prefix="vision-draft-grounding")
+    if pinned_query is None:
+        _run_concurrently([read_pages, read_goal_events, read_entities], thread_name_prefix="vision-draft-grounding")
     # A survey event wins a name both lists hold, so it keeps its exemption from the dead-event drop.
     survey_names = {c.name for c in survey_events}
     measured = [*survey_events, *(c for c in goal_events if c.name not in survey_names)]
@@ -1828,6 +1848,7 @@ def draft_scanner_from_goal(
         cohorts=matches.cohorts,
         experiments=[e for e in matches.experiments if e != pinned_experiment],
         pinned_experiment=pinned_experiment,
+        pinned_query=pinned_query,
         business_context=_business_context(team, user) if include_business_context else "",
         company=company,
     )
@@ -1856,6 +1877,7 @@ def draft_scanner_from_goal(
         name=_free_scanner_name(team.id, draft.name),
         credit_limit=None if free_only else monthly_credit_budget,
         free_only=free_only,
+        **({"query": pinned_query} if pinned_query is not None else {}),
     )
 
     def solve(query: dict[str, Any] | None) -> _BudgetSolution:
@@ -1873,7 +1895,8 @@ def draft_scanner_from_goal(
         )
 
     # Started next to the draft's own estimate, so a filter that matches nothing costs no second wait.
-    fallback = _pages_only(draft.query)
+    # The user's own filter is never swapped for a wider one, even when it matches nothing yet.
+    fallback = None if pinned_query is not None else _pages_only(draft.query)
     if fallback == draft.query:
         fallback = None
 

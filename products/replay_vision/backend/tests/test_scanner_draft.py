@@ -520,6 +520,21 @@ class TestDraftScannerEndpoint(_VisionAPITestCase):
             **expected_spend,
         }
 
+    @patch(_GENERATE_PATH)
+    def test_a_chosen_query_reaches_the_draft_without_its_date_range(self, mock_generate):
+        mock_generate.return_value = _draft()
+        chosen = {"kind": "RecordingsQuery", "filter_test_accounts": False}
+
+        resp = self.client.post(
+            self.draft_url,
+            data={"goal": "find rage clicks", "free_only": True, "query": {**chosen, "date_from": "-7d"}},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        assert resp.json()["query"] == chosen
+        assert '"filter_test_accounts":false' in mock_generate.call_args.kwargs["user_content"]
+
     @parameterized.expand(
         [
             ("free name kept", [], "User intent"),
@@ -1632,7 +1647,7 @@ class TestDraftScannerFromGoal(_VisionAPITestCase):
 
         return estimate
 
-    def _drafted_with(self, generate, estimate, experiment_id=None):
+    def _drafted_with(self, generate, estimate, experiment_id=None, pinned_query=None):
         with (
             patch(f"{_MODULE}.fetch_visited_paths", return_value=(VisitedPath(pathname="/billing", sessions=10),)),
             # Measure every candidate live, so these tests exercise the estimate-based fallback rather
@@ -1651,6 +1666,7 @@ class TestDraftScannerFromGoal(_VisionAPITestCase):
                 monthly_credit_budget=10_000,
                 user_access_control=_access_control(allow=True),
                 experiment_id=experiment_id,
+                pinned_query=pinned_query,
             )
 
     def test_an_event_filter_that_matches_nothing_falls_back_to_the_pages(self):
@@ -1703,6 +1719,24 @@ class TestDraftScannerFromGoal(_VisionAPITestCase):
 
         assert draft.query is not None
         assert [e["id"] for e in draft.query["events"]] == ["billing_limit_set"]
+        assert draft.estimated_monthly_observations == 0
+
+    def test_a_chosen_query_is_kept_even_when_it_matches_nothing(self):
+        # The user picked these filters, so neither the drafted filter nor the pages fallback may
+        # replace them: either would save a scanner watching recordings the user never chose.
+        chosen = {
+            "kind": "RecordingsQuery",
+            "properties": [{"type": "recording", "key": "visited_page", "value": "/billing", "operator": "icontains"}],
+            "events": [{"id": "billing_limit_set", "type": "events", "order": 0, "name": "billing_limit_set"}],
+        }
+
+        draft = self._drafted_with(
+            _draft(filter_pages=["/billing"]),
+            self._estimate_by_query(lambda query: bool(query.events)),
+            pinned_query=chosen,
+        )
+
+        assert draft.query == chosen
         assert draft.estimated_monthly_observations == 0
 
     def test_a_measured_dead_event_is_dropped_before_it_can_zero_the_scan(self):

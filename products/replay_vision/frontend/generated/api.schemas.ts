@@ -2697,6 +2697,8 @@ export interface DraftScannerRequestApi {
      * @maximum 2147483647
      */
     experiment_id?: number
+    /** A `RecordingsQuery` the person already chose, for example from the replay filters. The draft keeps it as the scanner's `query` and sizes the sampling dials against it, instead of drafting its own filter. A query with no filters watches every new recording. `date_from`/`date_to` are dropped, because a scanner's schedule owns time. Omit to let the draft pick the sessions. */
+    query?: unknown
 }
 
 /**
