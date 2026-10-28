@@ -34,8 +34,15 @@ from django.conf import settings
 import pyarrow as pa
 import pyarrow.compute as pc
 
-# Large builds spill their exact key set to disk rather than retaining it all in worker memory.
-MAX_UNIQUE_KEY_CHECK_BYTES = 256 * 1024 * 1024
+# Exact duplicate detection has to remember every distinct key a run has produced. Past this budget
+# the keys move to a local SQLite index, so a huge materialization cannot OOM the worker. Peak memory
+# of the in-memory check is about this state plus one slice, and a worker runs many activities at
+# once, so the budget has to stay a small share of a pod.
+MAX_UNIQUE_KEY_CHECK_BYTES = 1024 * 1024 * 1024
+
+# A materialization batch is about 100 MB, so a narrow key-only table sends ~12M rows at once, and the
+# group-by hash table for that many rows dwarfs the stored keys. Checking in slices keeps that bounded.
+UNIQUE_KEY_CHECK_SLICE_ROWS = 1_000_000
 
 
 class IncrementalWriteError(Exception):
@@ -108,12 +115,18 @@ class UniqueKeyTracker:
     it into an update, silently — so the distinct keys seen so far are carried across ``check``
     calls. Only key columns are retained, and a local SQLite index takes over when they exceed the
     memory budget. SQLite keeps its index on disk, so initial builds need no row-count limit.
+
+    In memory, each call groups only the new batch, then probes the stored keys with a hash join whose
+    build side is that small grouped batch. The stored keys are kept as a list of per-batch chunks and
+    are never merged into one buffer or inserted into a hash table again. Each call only looks them up
+    in the batch's small table, which is much cheaper than regrouping everything seen so far.
     """
 
     def __init__(self, unique_key: tuple[str, ...], max_bytes: int = MAX_UNIQUE_KEY_CHECK_BYTES) -> None:
         self._columns = list(unique_key)
         self._max_bytes = max_bytes
-        self._seen: pa.Table | None = None
+        self._seen_chunks: list[pa.Table] = []
+        self._seen_bytes = 0
         self._spill: sqlite3.Connection | None = None
         self._resources = ExitStack()
         # Checks run on executor threads, so cleanup cannot depend on which thread releases the tracker.
@@ -152,9 +165,9 @@ class UniqueKeyTracker:
         self._spill.execute("PRAGMA journal_mode=OFF")
         self._spill.execute("PRAGMA synchronous=OFF")
         self._spill.execute("CREATE TABLE unique_keys (key TEXT PRIMARY KEY) WITHOUT ROWID")
-        if self._seen is not None:
-            self._check_disk(self._seen)
-            self._seen = None
+        for chunk in self._seen_chunks:
+            self._check_disk(chunk)
+        self._seen_chunks = []
 
     def check(self, batch: pa.RecordBatch) -> None:
         """Fail if ``batch`` has a missing, null, or duplicate key — including a key already seen
@@ -167,23 +180,34 @@ class UniqueKeyTracker:
                 f"Update the incremental configuration to match the query's columns."
             )
         assert_no_null_keys(batch, tuple(self._columns))
+        for offset in range(0, max(batch.num_rows, 1), UNIQUE_KEY_CHECK_SLICE_ROWS):
+            self._check_slice(batch.slice(offset, UNIQUE_KEY_CHECK_SLICE_ROWS))
 
+    def _check_slice(self, batch: pa.RecordBatch) -> None:
         keys = pa.Table.from_batches([batch]).select(self._columns)
-        if self._spill is None and (self._seen.nbytes if self._seen is not None else 0) + keys.nbytes > self._max_bytes:
-            self._start_spill()
         if self._spill is not None:
             self._check_disk(keys)
             return
-        combined = keys if self._seen is None else pa.concat_tables([self._seen, keys])
-        grouped = combined.group_by(self._columns).aggregate([([], "count_all")])
-        if grouped.num_rows != combined.num_rows:
-            worst = pc.max(grouped.column("count_all")).as_py()
+        grouped = keys.group_by(self._columns).aggregate([([], "count_all")])
+        worst = pc.max(grouped.column("count_all")).as_py() if grouped.num_rows != keys.num_rows else 1
+        if self._seen_chunks:
+            # Acero builds the hash table on the right input, so the grouped batch goes on the right
+            # and the stored keys are only streamed through it. Every stored key is distinct, so a
+            # key found there occurs once more than its count in this batch.
+            already_seen = pa.concat_tables(self._seen_chunks).join(grouped, keys=self._columns, join_type="right semi")
+            if already_seen.num_rows:
+                worst = max(worst, pc.max(already_seen.column("count_all")).as_py() + 1)
+        if worst > 1:
             raise IncrementalWriteError(
                 f"The unique key ({', '.join(self._columns)}) does not identify a single row: one key "
                 f"appears {worst} times in this run's result. Add the columns that tell those rows apart."
             )
 
-        self._seen = grouped.select(self._columns)
+        distinct = grouped.select(self._columns).combine_chunks()
+        self._seen_chunks.append(distinct)
+        self._seen_bytes += distinct.nbytes
+        if self._seen_bytes > self._max_bytes:
+            self._start_spill()
 
 
 def max_of(batch: pa.RecordBatch, column: str, running: Any = None) -> Any:
