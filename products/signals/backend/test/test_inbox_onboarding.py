@@ -31,10 +31,9 @@ from products.signals.backend.models import (
     SignalTeamConfig,
 )
 from products.signals.backend.onboarding_activation import InboxOnboardingActivation
-from products.signals.backend.onboarding_completion import InboxOnboardingReconciler
 from products.signals.backend.scout_harness.config_registry import register_missing_configs
 from products.signals.backend.scout_harness.lazy_seed import seed_canonical_skills
-from products.signals.backend.tasks import launch_inbox_onboarding_job, reconcile_inbox_onboarding
+from products.signals.backend.tasks import launch_inbox_onboarding_job
 
 
 class TestInboxOnboarding(APIBaseTest):
@@ -84,7 +83,6 @@ class TestInboxOnboarding(APIBaseTest):
             patch(
                 "products.signals.backend.onboarding_analytics.posthoganalytics.feature_enabled", return_value=True
             ) as flag,
-            patch("products.signals.backend.tasks.reconcile_inbox_onboarding.delay") as reconcile,
             self.captureOnCommitCallbacks(execute=True),
         ):
             first = self.client.post(f"{self.url}expose/", {"variant": variant}, format="json")
@@ -103,70 +101,6 @@ class TestInboxOnboarding(APIBaseTest):
         assert capture.call_args.kwargs["groups"]["organization"] == str(self.organization.id)
         assert flag.call_args.args == ("self-driving-ubp", str(self.user.distinct_id))
         assert flag.call_args.kwargs["groups"]["organization"] == str(self.organization.id)
-        if variant == "control":
-            reconcile.assert_called_once_with(self.team.id)
-        else:
-            reconcile.assert_not_called()
-
-    def test_control_completion_is_verified_without_a_browser_and_only_once(self) -> None:
-        config = SignalTeamConfig.objects.get(team=self.team)
-        config.onboarding = {"variant": "control", "exposed_at": timezone.now().isoformat(), "exposed_by": self.user.pk}
-        config.save()
-        with (
-            patch.object(InboxOnboardingReconciler, "has_repository", return_value=False) as repository,
-            patch("products.signals.backend.onboarding_completion.ph_scoped_capture") as capture,
-            patch(
-                "products.signals.backend.onboarding_analytics.posthoganalytics.feature_enabled",
-                side_effect=RuntimeError("Unavailable"),
-            ),
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            assert InboxOnboardingReconciler(self.team.id).run() is True
-            config.refresh_from_db()
-            assert not config.onboarding.get("completed_at")
-            repository.return_value = True
-            assert InboxOnboardingReconciler(self.team.id).run() is False
-            assert InboxOnboardingReconciler(self.team.id).run() is False
-        config.refresh_from_db()
-        assert config.onboarding["completed_at"]
-        capture.assert_called_once()
-        assert capture.return_value.__enter__.return_value.call_args.kwargs["properties"]["variant"] == "control"
-        assert capture.return_value.__enter__.return_value.call_args.kwargs["properties"]["self_driving_ubp"] is None
-        assert capture.return_value.__enter__.return_value.call_args.kwargs["properties"]["setup_mode"] == "legacy"
-
-    @parameterized.expand([(False,), (True,)])
-    def test_control_reconciliation_waits_for_manual_activation(self, draft_saved_during_check: bool) -> None:
-        config = SignalTeamConfig.objects.get(team=self.team)
-        config.onboarding = {"variant": "control", "exposed_at": timezone.now().isoformat()}
-        if not draft_saved_during_check:
-            config.onboarding["draft"] = self.draft
-        config.save()
-
-        def save_draft_and_return_repository() -> bool:
-            config.onboarding = {**(config.onboarding or {}), "draft": self.draft}
-            config.save()
-            return True
-
-        with (
-            patch.object(InboxOnboardingReconciler, "has_repository", side_effect=save_draft_and_return_repository),
-            patch("products.signals.backend.onboarding_completion.ph_scoped_capture") as capture,
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            assert InboxOnboardingReconciler(self.team.id).run() is False
-        config.refresh_from_db()
-        assert not config.onboarding.get("completed_at")
-        capture.assert_not_called()
-
-    def test_control_without_a_source_never_converts(self) -> None:
-        config = SignalTeamConfig.objects.get(team=self.team)
-        config.onboarding = {"variant": "control", "exposed_at": timezone.now().isoformat()}
-        config.save()
-        self.source.enabled = False
-        self.source.save()
-        with patch.object(InboxOnboardingReconciler, "has_repository", return_value=True):
-            assert InboxOnboardingReconciler(self.team.id).run() is True
-        config.refresh_from_db()
-        assert not config.onboarding.get("completed_at")
 
     @parameterized.expand(
         [
@@ -310,8 +244,8 @@ class TestInboxOnboarding(APIBaseTest):
         assert response.status_code == 403, response.json()
         launch.assert_not_called()
 
-    @parameterized.expand([(None, False), (True, False), (False, False), (None, True), (False, True)])
-    def test_scout_only_completion_respects_source_gate(self, enabled: bool | None, control: bool) -> None:
+    @parameterized.expand([(None,), (True,), (False,)])
+    def test_scout_only_completion_respects_source_gate(self, enabled: bool | None) -> None:
         self.source.enabled = False
         self.source.save()
         self.draft["sources"] = []
@@ -321,20 +255,13 @@ class TestInboxOnboarding(APIBaseTest):
             SignalSourceConfig.objects.create(
                 team=self.team, source_product="signals_scout", source_type="cross_source_issue", enabled=enabled
             )
-        config = SignalTeamConfig.objects.get(team=self.team)
-        if control:
-            config.onboarding = {"variant": "control", "exposed_at": timezone.now().isoformat()}
-            config.save()
         Integration.objects.create(team=self.team, kind="github")
         with patch.object(
             GitHubIntegration, "list_repositories", return_value=([{"full_name": "example/product"}], False)
         ):
-            if control:
-                assert InboxOnboardingReconciler(self.team.id).run() is (enabled is False)
-            else:
-                response = self.client.post(f"{self.url}complete/", self.draft, format="json")
-                assert response.status_code == (400 if enabled is False else 200), response.json()
-        config.refresh_from_db()
+            response = self.client.post(f"{self.url}complete/", self.draft, format="json")
+        assert response.status_code == (400 if enabled is False else 200), response.json()
+        config = SignalTeamConfig.objects.get(team=self.team)
         assert bool((config.onboarding or {}).get("completed_at")) is (enabled is not False)
 
     @parameterized.expand(
@@ -386,7 +313,7 @@ class TestInboxOnboarding(APIBaseTest):
             )
         assert response.status_code == expected_status, response.content
 
-    @parameterized.expand([("",), ("complete/",), ("expose/",), ("reconcile/",)])
+    @parameterized.expand([("",), ("complete/",), ("expose/",)])
     def test_onboarding_writes_require_a_non_sandbox_credential(self, action: str) -> None:
         application = OAuthApplication.objects.create(
             client_id=sorted(SANDBOX_OAUTH_APP_CLIENT_IDS)[0],
@@ -468,8 +395,8 @@ class TestInboxOnboarding(APIBaseTest):
             scout.refresh_from_db()
             assert scout.enabled
 
-    @parameterized.expand([("expose",), ("reconcile",), ("read",)])
-    def test_child_scoped_credential_cannot_start_parent_reconciliation(self, action: str) -> None:
+    @parameterized.expand([("expose",), ("read",)])
+    def test_child_scoped_credential_cannot_access_parent_onboarding(self, action: str) -> None:
         child = Team.objects.create(organization=self.organization, parent_team=self.team, name="Child")
         raw = generate_random_token_personal()
         PersonalAPIKey.objects.create(
@@ -512,46 +439,6 @@ class TestInboxOnboarding(APIBaseTest):
         assert response.status_code == (200 if healthy else 503), response.content
         assert listing.call_count == 2
         assert all(call.kwargs == {"per_page": 1} for call in listing.call_args_list)
-
-    @parameterized.expand([("recovered",), ("expired",), ("manual",), ("completed",)])
-    def test_background_polling_survives_outage_and_stops(self, terminal_state: str) -> None:
-        config = SignalTeamConfig.objects.get(team=self.team)
-        config.onboarding = {"variant": "control", "exposed_at": timezone.now().isoformat()}
-        config.save()
-        Integration.objects.create(team=self.team, kind="github")
-        with (
-            patch.object(
-                GitHubIntegration, "list_repositories", side_effect=GitHubRateLimitError("limited")
-            ) as listing,
-            patch.object(reconcile_inbox_onboarding, "apply_async") as schedule,
-        ):
-            failed_checks = 0
-            for _ in range(7):
-                schedule.reset_mock()
-                reconcile_inbox_onboarding.run(self.team.id, failed_checks=failed_checks)
-                schedule.assert_called_once()
-                assert 60 <= schedule.call_args.kwargs["countdown"] <= 900
-                failed_checks = schedule.call_args.kwargs["kwargs"]["failed_checks"]
-            config.refresh_from_db()
-            assert not config.onboarding.get("completed_at")
-            if terminal_state == "expired":
-                config.onboarding["exposed_at"] = (timezone.now() - timedelta(days=8)).isoformat()
-            elif terminal_state == "manual":
-                config.onboarding["draft"] = self.draft
-            elif terminal_state == "completed":
-                config.onboarding["completed_at"] = timezone.now().isoformat()
-            config.save()
-            schedule.reset_mock()
-            listing.reset_mock()
-            listing.side_effect = None
-            listing.return_value = ([{"full_name": "example/product"}], False)
-            reconcile_inbox_onboarding.run(self.team.id, failed_checks=failed_checks)
-            schedule.assert_not_called()
-            if terminal_state == "recovered":
-                config.refresh_from_db()
-                assert config.onboarding["completed_at"]
-            else:
-                listing.assert_not_called()
 
     @parameterized.expand(
         [
@@ -631,20 +518,6 @@ class TestInboxOnboarding(APIBaseTest):
         assert response.json()["jobs"] == {"scout": "started", "recommendations": expected_status}
         config.refresh_from_db()
         assert config.onboarding["jobs"]["recommendations"] == "started"
-
-    def test_background_polling_honors_github_retry_hint(self) -> None:
-        config = SignalTeamConfig.objects.get(team=self.team)
-        config.onboarding = {"variant": "control", "exposed_at": timezone.now().isoformat()}
-        config.save()
-        Integration.objects.create(team=self.team, kind="github")
-        with (
-            patch.object(
-                GitHubIntegration, "list_repositories", side_effect=GitHubRateLimitError("limited", retry_after=3600)
-            ),
-            patch.object(reconcile_inbox_onboarding, "apply_async") as schedule,
-        ):
-            reconcile_inbox_onboarding.run(self.team.id, failed_checks=6)
-        assert schedule.call_args.kwargs["countdown"] == 3600
 
 
 class TestInboxOnboardingActivation(BaseTest):

@@ -222,12 +222,6 @@ class InboxOnboardingViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
             self._check_scout_access(request)
         return Response(self._service().expose(serializer.validated_data["variant"]))
 
-    @extend_schema(request=None, responses=InboxOnboardingStateSerializer)
-    @action(detail=False, methods=["POST"])
-    def reconcile(self, request: Request, *args: object, **kwargs: object) -> Response:
-        self._check_scout_access(request)
-        return Response(self._service().reconcile())
-
     @extend_schema(responses=InboxOnboardingStateSerializer)
     def list(self, request: Request, *args: object, **kwargs: object) -> Response:
         return Response(self._service().state())

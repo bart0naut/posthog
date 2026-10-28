@@ -432,20 +432,6 @@ export const signalsOnboardingExposeCreate = async (
     })
 }
 
-export const getSignalsOnboardingReconcileCreateUrl = (projectId: string) => {
-    return `/api/projects/${projectId}/signals/onboarding/reconcile/`
-}
-
-export const signalsOnboardingReconcileCreate = async (
-    projectId: string,
-    options?: RequestInit
-): Promise<InboxOnboardingStateApi> => {
-    return apiMutator<InboxOnboardingStateApi>(getSignalsOnboardingReconcileCreateUrl(projectId), {
-        ...options,
-        method: 'POST',
-    })
-}
-
 export const getSignalsProcessingListUrl = (projectId: string, params?: SignalsProcessingListParams) => {
     const normalizedParams = new URLSearchParams()
 

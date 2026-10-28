@@ -126,10 +126,6 @@ class InboxOnboarding:
     def state(self) -> dict[str, Any]:
         return self._state(get_or_create_team_extension(self.team, SignalTeamConfig))
 
-    def reconcile(self) -> dict[str, Any]:
-        InboxOnboardingReconciler(self.team_id).run()
-        return self.state()
-
     def expose(self, variant: str) -> dict[str, Any]:
         config = get_or_create_team_extension(self.team, SignalTeamConfig)
         with transaction.atomic():
@@ -289,9 +285,3 @@ class InboxOnboarding:
             team=self.team,
             organization=self.team.organization,
         )
-        if (config.onboarding or {}).get("variant") == "control":
-            from products.signals.backend.tasks import (
-                reconcile_inbox_onboarding,  # noqa: PLC0415 - avoid task imports during API initialization
-            )
-
-            reconcile_inbox_onboarding.delay(self.team_id)
