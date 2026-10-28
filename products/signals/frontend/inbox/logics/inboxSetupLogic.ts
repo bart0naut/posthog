@@ -930,7 +930,11 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 actions.setError(null)
                 try {
                     await saveDraft()
-                    markGithubConnectStarted(values.currentTeamId)
+                    // The guided GitHub step returns to its own step, and its marker would let a later quick link
+                    // replace the choices made there.
+                    if (values.isQuickSetup) {
+                        markGithubConnectStarted(values.currentTeamId)
+                    }
                     window.location.assign(url)
                 } catch {
                     actions.setError(

@@ -59,7 +59,7 @@ describe('focused Inbox setup', () => {
         }
     }
 
-    async function connectGithubFromWelcome(): Promise<void> {
+    async function connectGithub(): Promise<void> {
         const originalLocation = window.location
         Object.defineProperty(window, 'location', {
             value: { ...originalLocation, assign: jest.fn() },
@@ -247,7 +247,7 @@ describe('focused Inbox setup', () => {
                 expect(logic.values.savedState?.draft?.automatic_implementation).toBe(savedImplementation)
             }
             if (entry === 'github_return') {
-                await connectGithubFromWelcome()
+                await connectGithub()
                 router.actions.replace(router.values.location.pathname, { onboarding_step: 'quick' })
                 await waitFor(() => expect(logic.values.shouldResumeQuickSetup).toBe(true))
                 logic.actions.resumeQuickSetup()
@@ -336,13 +336,16 @@ describe('focused Inbox setup', () => {
         ])
     })
 
-    it('does not activate from a quick-setup link unless this tab started the GitHub connection', async () => {
+    it('does not activate from a quick-setup link unless the welcome screen started the GitHub connection', async () => {
         const capture = jest.spyOn(posthog, 'capture')
         savedDraft = null
         failCompletion = false
         hasEvents = true
         canonicalScouts = [generalScoutConfig()]
         await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
+        router.actions.replace(router.values.location.pathname, { onboarding_step: 'github' })
+        expect(logic.values.isQuickSetup).toBe(false)
+        await connectGithub()
         router.actions.replace(router.values.location.pathname, { onboarding_step: 'quick' })
         await waitFor(() => expect(logic.values.shouldResumeQuickSetup).toBe(true))
         await expectLogic(logic, () => logic.actions.resumeQuickSetup()).toFinishAllListeners()
