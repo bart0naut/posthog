@@ -20,7 +20,7 @@ export function InboxSetupActions(): JSX.Element {
                 <div className="flex min-w-0 flex-col gap-2">
                     <p className="m-0 text-sm text-secondary">
                         Install with Wizard. Run the setup agent in your repository to connect GitHub and choose your
-                        signals and scouts.
+                        sources and scouts.
                     </p>
                     <TerminalCard
                         command={SELF_DRIVING_WIZARD_COMMAND}

@@ -31,7 +31,7 @@ export function InboxOnboardingBanner(): JSX.Element {
             {isTreatment ? (
                 <>
                     <p className="mb-0.5 text-sm text-tertiary">
-                        Choose signals and scouts to start receiving reports again.
+                        Choose sources and scouts to start receiving reports again.
                     </p>
                     <LemonButton type="primary" className="w-fit" onClick={openSetup}>
                         Set up Self-Driving
