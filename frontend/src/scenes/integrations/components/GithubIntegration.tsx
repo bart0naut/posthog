@@ -2,7 +2,7 @@ import { useActions, useValues } from 'kea'
 import { useEffect, useState } from 'react'
 
 import { IconChevronDown, IconGithub } from '@posthog/icons'
-import { LemonBanner, LemonButton, LemonButtonProps, Link } from '@posthog/lemon-ui'
+import { LemonBanner, LemonButton, Link } from '@posthog/lemon-ui'
 
 import api from 'lib/api'
 import { useOnMountEffect } from 'lib/hooks/useOnMountEffect'
@@ -32,12 +32,10 @@ export function GithubIntegration({
     integrationSuffix,
     onAuthorize,
     authorizing = false,
-    connectButtonSize,
 }: {
     next?: string
     onAuthorize?: (url: string) => void
     authorizing?: boolean
-    connectButtonSize?: LemonButtonProps['size']
     centered?: boolean
     connectText?: string
     emphasizeConnect?: boolean
@@ -244,7 +242,6 @@ export function GithubIntegration({
                         <div className="flex flex-wrap justify-center gap-2">
                             <LemonButton
                                 type={canLinkExisting ? 'secondary' : 'primary'}
-                                size={connectButtonSize}
                                 icon={<IconGithub />}
                                 disableClientSideRouting
                                 to={onAuthorize ? undefined : authorizationUrl}

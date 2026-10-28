@@ -38,7 +38,6 @@ export function InboxQuickSetupAction(): JSX.Element {
                 <LemonButton
                     type="primary"
                     status="alt"
-                    size="large"
                     onClick={() => activateQuickSetup()}
                     loading={saving}
                     disabledReason={
@@ -59,7 +58,6 @@ export function InboxQuickSetupAction(): JSX.Element {
                     onAuthorize={connectGithub}
                     authorizing={saving || (integrationsLoading && integrations === null)}
                     connectText="Connect GitHub"
-                    connectButtonSize="large"
                     emphasizeConnect
                     showPersonalConnectionHelp={false}
                     showManageButton={false}
