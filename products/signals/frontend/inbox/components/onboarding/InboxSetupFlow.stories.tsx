@@ -12,7 +12,6 @@ import { expect } from 'storybook/test'
 import type { InboxOnboardingDraftApi } from '../../../generated/api.schemas'
 import { mockScoutSuggestionSet, mockScoutConfigs } from '../../__mocks__/scoutConfigs'
 import { inboxSetupLogic } from '../../logics/inboxSetupLogic'
-import { SELF_DRIVING_WIZARD_COMMAND } from '../../utils/selfDrivingWizardCommand'
 import { InboxActivationPanel } from './InboxActivationPanel'
 import { InboxOnboardingBanner } from './InboxOnboardingBanner'
 import { InboxOnboardingEntry } from './InboxOnboardingEntry'
@@ -317,11 +316,11 @@ export const GithubAccessRequired: Story = {
 }
 
 export const TreatmentEntry = {
-    name: 'Guided intro with manual setup only',
+    name: 'Guided assignment with GitHub and manual setup',
     render: () => <InboxOnboardingEntry />,
     play: async ({ canvas }) => {
-        await canvas.findByText('Set up Self-Driving')
-        await expect(canvas.queryByLabelText(`Copy command: ${SELF_DRIVING_WIZARD_COMMAND}`)).not.toBeInTheDocument()
+        await canvas.findByText('Connect GitHub')
+        await expect(canvas.getByText('Start manually')).toBeVisible()
     },
     decorators: [
         mswDecorator({
@@ -347,14 +346,14 @@ export const NarrowTreatmentEntry: Story = {
 }
 
 export const ManualEntry: Story = {
-    name: 'Control intro with Wizard and manual setup',
+    name: 'Control assignment with GitHub and manual setup',
     parameters: {
         featureFlags: { ...meta.parameters?.featureFlags, [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'control' },
     },
     render: () => <InboxOnboardingEntry />,
     play: async ({ canvas }) => {
         await canvas.findByText('Start manually')
-        await expect(canvas.getByLabelText(`Copy command: ${SELF_DRIVING_WIZARD_COMMAND}`)).toBeVisible()
+        await expect(canvas.getByText('Connect GitHub')).toBeVisible()
     },
     decorators: [
         mswDecorator({
@@ -372,7 +371,7 @@ export const ManualEntry: Story = {
 
 export const ExperimentDisabledEntry: Story = {
     ...ManualEntry,
-    name: 'Experiment disabled with control intro',
+    name: 'Experiment disabled with GitHub and manual setup',
     parameters: {
         featureFlags: { ...meta.parameters?.featureFlags, [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: false },
     },
@@ -408,14 +407,14 @@ const quickGeneralScout = {
 }
 
 export const QuickEntry: Story = {
-    name: 'Quick setup intro with manual setup only',
+    name: 'Quick setup intro with GitHub and manual setup',
     parameters: {
         featureFlags: { ...meta.parameters?.featureFlags, [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'test-github' },
     },
     render: () => <QuickActivationPreview />,
     play: async ({ canvas }) => {
         await canvas.findByText('Connect GitHub')
-        await expect(canvas.queryByLabelText(`Copy command: ${SELF_DRIVING_WIZARD_COMMAND}`)).not.toBeInTheDocument()
+        await expect(canvas.getByText('Start manually')).toBeVisible()
     },
     decorators: [
         mswDecorator({
@@ -447,7 +446,7 @@ export const QuickConnected: Story = {
     name: 'Quick setup with GitHub connected',
     play: async ({ canvas }) => {
         await canvas.findByText('Activate Self-Driving')
-        await expect(canvas.queryByLabelText(`Copy command: ${SELF_DRIVING_WIZARD_COMMAND}`)).not.toBeInTheDocument()
+        await expect(canvas.getByText('Start manually')).toBeVisible()
     },
     decorators: [
         mswDecorator({

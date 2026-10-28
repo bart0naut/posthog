@@ -195,17 +195,19 @@ describe('focused Inbox setup', () => {
     })
 
     it.each([
-        ['button', true, null],
-        ['github_return', true, null],
-        ['button', false, null],
-        ['github_return', false, null],
-        ['button', true, true],
-        ['button', false, false],
+        ['button', true, null, null],
+        ['github_return', true, null, 'test-github'],
+        ['button', false, null, null],
+        ['github_return', false, null, 'test-github'],
+        ['button', true, true, null],
+        ['button', false, false, null],
+        ['button', true, null, 'control'],
+        ['button', true, null, 'test-ui'],
     ] as const)(
-        'activates through %s with usage-based pricing %s and saved implementation %s',
-        async (entry, usageBasedPricing, savedImplementation) => {
+        'activates through %s with usage-based pricing %s, saved implementation %s and assignment %s',
+        async (entry, usageBasedPricing, savedImplementation, assignment) => {
             const capture = jest.spyOn(posthog, 'capture')
-            variant = entry === 'github_return' ? 'test-github' : null
+            variant = assignment
             featureFlagLogic.actions.setFeatureFlags([], {
                 [FEATURE_FLAGS.SELF_DRIVING_UBP]: usageBasedPricing,
                 [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: 'test-github',
@@ -225,7 +227,7 @@ describe('focused Inbox setup', () => {
             const refresh = jest.spyOn(signalsApi, 'signalsScoutSuggestionsRefresh')
             logic.actions.startSetup()
             await waitFor(() => expect(logic.values.quickSetupReady).toBe(true))
-            expect(logic.values.isQuickSetup).toBe(true)
+            expect(logic.values.isQuickSetup).toBe(savedImplementation === null)
             if (savedImplementation !== null) {
                 expect(logic.values.savedState?.draft?.automatic_implementation).toBe(savedImplementation)
             }
@@ -256,7 +258,7 @@ describe('focused Inbox setup', () => {
                 [
                     'self-driving onboarding activation requested',
                     expect.objectContaining({
-                        variant: 'test-github',
+                        variant: variant ?? 'test-github',
                         setup_mode: 'quick',
                         flow_version: 'ui-first-v1',
                         inbox_client: 'cloud',
@@ -275,7 +277,7 @@ describe('focused Inbox setup', () => {
         }
     )
 
-    it.each(['control', null, 'test-ui'] as const)(
+    it.each(['control', null, 'test-ui', 'test-github'] as const)(
         'opens setup and preserves the %s assignment through resume and activation',
         async (assignment) => {
             variant = assignment
@@ -285,8 +287,9 @@ describe('focused Inbox setup', () => {
                 ...(assignment ? { [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: assignment } : {}),
             })
             await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
-            expect(logic.values.usesFocusedSetup).toBe(assignment === 'test-ui')
+            expect(logic.values.usesFocusedSetup).toBe(true)
             expect(logic.values.inProgress).toBe(false)
+            await expectLogic(logic, () => logic.actions.startSetup()).toFinishAllListeners()
             const capture = jest.spyOn(posthog, 'capture')
             const onboarding = inboxOnboardingLogic()
             onboarding.mount()
@@ -296,7 +299,7 @@ describe('focused Inbox setup', () => {
                 expect(logic.values.usesFocusedSetup).toBe(true)
                 expect(logic.values.inProgress).toBe(true)
                 expect(onboarding.values.onboardingMode).toBe('takeover')
-                expect(router.values.searchParams.onboarding_step).toBeUndefined()
+                expect(router.values.searchParams.onboarding_step).toBe('signals')
                 await expectLogic(logic, () => logic.actions.startSetup()).toFinishAllListeners()
                 logic.actions.reportStepViewed()
                 logic.actions.reportStepViewed()
@@ -350,7 +353,7 @@ describe('focused Inbox setup', () => {
                 ).toHaveLength(1)
                 expect(
                     capture.mock.calls.filter(([event]) => event === 'Inbox welcome manual setup clicked')
-                ).toHaveLength(assignment === 'test-ui' ? 0 : 1)
+                ).toHaveLength(1)
             } finally {
                 onboarding.unmount()
                 capture.mockRestore()

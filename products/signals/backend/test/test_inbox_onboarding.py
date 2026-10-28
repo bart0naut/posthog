@@ -175,14 +175,9 @@ class TestInboxOnboarding(APIBaseTest):
             ("disabled_source",),
             ("scanner",),
             ("empty",),
-            ("quick_scout",),
         ]
     )
     def test_incomplete_setup_never_converts(self, missing: str) -> None:
-        if missing.startswith("quick_"):
-            config = SignalTeamConfig.objects.get(team=self.team)
-            config.onboarding = {"variant": "test-github"}
-            config.save()
         if missing == "source":
             self.source.enabled = False
             self.source.save()
@@ -217,7 +212,7 @@ class TestInboxOnboarding(APIBaseTest):
         self, variant: str | None, automatic_implementation: bool, arm: str | None
     ) -> None:
         self.draft["automatic_implementation"] = automatic_implementation
-        if variant == "test-github":
+        if variant == "test-github" and automatic_implementation:
             self.draft["suggestions"] = [self.suggestion]
             SignalScoutConfig.objects.create(team=self.team, skill_name=self.scout_skill_name, enabled=True, emit=True)
         config = SignalTeamConfig.objects.get(team=self.team)
@@ -279,9 +274,9 @@ class TestInboxOnboarding(APIBaseTest):
             "automatic_implementation": automatic_implementation,
             "implementation_priority": "P1",
             "enabled_source_products": ["error_tracking", "signals_scout"]
-            if variant == "test-github"
+            if self.draft["suggestions"]
             else ["error_tracking"],
-            "scout_count": 1 if variant == "test-github" else 0,
+            "scout_count": len(self.draft["suggestions"]),
         }
         assert (
             len(
