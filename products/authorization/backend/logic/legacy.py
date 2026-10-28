@@ -50,6 +50,11 @@ def _check(session: Session, request: CheckRequest) -> bool:
     if resource.project_id is None:
         raise ValueError(f"A {resource.type} check needs project_id.")
     scope = _scope(resource.type)
+    if resource.id is not None and scope in RESOURCE_FALLBACK_MAP and resource.parent is None:
+        raise ValueError(
+            f"A {resource.type} check needs `parent`, or it skips the parent's rules. "
+            "Use Parent(id=None) when the object has no parent."
+        )
 
     principal = _principal(session, request.subject)
     if principal is None:
@@ -63,13 +68,12 @@ def _check(session: Session, request: CheckRequest) -> bool:
             return access.check_can_modify_access_levels_for_object(cast(Team, access.team))
         return access.check_access_level_for_resource(scope, level)
 
-    has_parent = scope in RESOURCE_FALLBACK_MAP or resource.parent_id is not None
     ref = ObjectAccessRef(
         resource=scope,
         id=resource.id,
         team_id=resource.project_id,
         created_by_id=resource.created_by_id,
-        fallback_parent=FallbackParent(id=resource.parent_id) if has_parent else None,
+        fallback_parent=FallbackParent(id=resource.parent.id) if resource.parent is not None else None,
     )
     if action == Action.MANAGE_ACCESS:
         return access.check_can_modify_access_levels_for_ref(ref)
@@ -110,11 +114,14 @@ def _principal_key(principal: Any) -> PrincipalKey:
 
 def _access(session: Session, principal: Any, team_id: int) -> UserAccessControl | None:
     key = (_principal_key(principal), team_id)
-    if key not in session.access:
-        if team_id not in session.teams:
-            session.teams[team_id] = Team.objects.filter(pk=team_id).first()
-        team = session.teams[team_id]
-        if team is None:
-            return None
-        session.access[key] = UserAccessControl(user=cast(User, principal), team=team)
-    return session.access[key]
+    if key in session.access:
+        return session.access[key]
+    if team_id not in session.teams:
+        session.teams[team_id] = Team.objects.filter(pk=team_id).first()
+    team = session.teams[team_id]
+    if team is None:
+        return None
+    access = UserAccessControl(user=cast(User, principal), team=team)
+    if not session.uncommitted:
+        session.access[key] = access
+    return access

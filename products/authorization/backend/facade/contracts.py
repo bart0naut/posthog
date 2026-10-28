@@ -32,13 +32,21 @@ class OpenFgaStatus:
 
 
 @dataclass(frozen=True, kw_only=True)
+class Parent:
+    """The parent object that a resource falls back to for access. `id=None` means the object has no parent."""
+
+    id: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class Resource:
     """One resource, or with `id=None` every resource of `type`, for list and create checks.
 
-    `created_by_id` and `parent_id` are the facts the current access rules read from the object:
-    the creator's user id, and the id of the parent it falls back to, such as a warehouse table's
-    source. `parent_id=None` means the object has no parent. A resource built without the creator
-    gives the creator no extra access, so build it from the model when the model is at hand.
+    `created_by_id` and `parent` are the facts the current access rules read from the object.
+    `created_by_id` is the creator's user id. A resource built without it gives the creator no
+    extra access. `parent` is the object it falls back to, such as a warehouse table's source.
+    A check on a type that falls back raises without it, because skipping the parent's rules can
+    give access the parent denies. Build the resource from the model when the model is at hand.
     """
 
     type: ResourceType
@@ -46,7 +54,7 @@ class Resource:
     project_id: int | None = None
     organization_id: UUID | None = None
     created_by_id: int | None = None
-    parent_id: str | None = None
+    parent: Parent | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

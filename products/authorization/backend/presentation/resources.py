@@ -1,4 +1,7 @@
-"""Builds an authorization `Resource` from a model, with the facts the access rules read from it."""
+"""Builds an authorization `Resource` from a model, with the facts the access rules read from it.
+
+It lives outside the facade because it takes a Django model, which the facade must not accept.
+"""
 
 from django.db.models import Model
 
@@ -7,8 +10,9 @@ from products.access_control.backend.facade.user_access_control import (
     fallback_parent_object_id,
     model_to_resource,
 )
-from products.authorization.backend.facade.contracts import Resource
-from products.authorization.backend.facade.enums import ResourceType
+
+from ..facade.contracts import Parent, Resource
+from ..facade.enums import ResourceType
 
 MEMBERSHIP_RESOURCES = frozenset({ResourceType.ORGANIZATION, ResourceType.PROJECT, ResourceType.ROLE})
 
@@ -33,5 +37,5 @@ def resource_for_object(obj: Model) -> Resource:
         id=str(obj.pk),
         project_id=team_id,
         created_by_id=getattr(obj, "created_by_id", None),
-        parent_id=fallback_parent_object_id(obj, parent) if parent else None,
+        parent=Parent(id=fallback_parent_object_id(obj, parent)) if parent else None,
     )

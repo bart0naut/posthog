@@ -5,12 +5,12 @@ import pytest
 from posthog.test.base import BaseTest
 
 from django.contrib.auth.models import AnonymousUser
+from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 from django.test import RequestFactory
 
 from parameterized import parameterized
 
-from posthog.authorization_resources import resource_for_object
 from posthog.constants import AvailableFeature
 from posthog.models import OrganizationMembership, User
 
@@ -20,6 +20,7 @@ from products.authorization.backend.facade import api as authorization
 from products.authorization.backend.facade.contracts import CheckRequest, Context, Resource, Subject
 from products.authorization.backend.facade.enums import Action, ResourceType
 from products.authorization.backend.middleware import AuthorizationSessionMiddleware
+from products.authorization.backend.presentation.resources import resource_for_object
 from products.dashboards.backend.models.dashboard import Dashboard
 from products.warehouse_sources.backend.facade.models import DataWarehouseTable, ExternalDataSource
 
@@ -183,6 +184,21 @@ class TestCheckMatchesCurrentRules(BaseTest):
 
         assert (before, after) == (True, False)
 
+    def test_rolled_back_grant_is_not_kept(self) -> None:
+        self._rule("dashboard", "none", str(self.dashboard.id))
+        resource = resource_for_object(self.dashboard)
+        subject = Subject(user_id=self.user.id)
+
+        with authorization.authorization_session():
+            with pytest.raises(RuntimeError):
+                with transaction.atomic():
+                    self._rule("dashboard", "editor", str(self.dashboard.id), member=True)
+                    during = authorization.check(resource=resource, action=Action.EDIT, subject=subject)
+                    raise RuntimeError
+            after = authorization.check(resource=resource, action=Action.EDIT, subject=subject)
+
+        assert (during, after) == (True, False)
+
     @parameterized.expand(
         [
             (
@@ -192,6 +208,11 @@ class TestCheckMatchesCurrentRules(BaseTest):
             ),
             ("action_without_a_level", {"action": Action.JOIN}, ValueError),
             ("no_project", {"resource": Resource(type=ResourceType.DASHBOARD, id="1")}, ValueError),
+            (
+                "warehouse_table_without_parent",
+                {"resource": Resource(type=ResourceType.WAREHOUSE_TABLE, id="1", project_id=1)},
+                ValueError,
+            ),
             ("context", {"context": Context(channel="mcp")}, NotImplementedError),
             ("api_key_subject", {"subject": Subject(api_key_id="key")}, NotImplementedError),
         ]
