@@ -11,15 +11,10 @@ import { objectsEqual } from 'lib/utils/objects'
 import { teamLogic } from 'scenes/teamLogic'
 import { urls } from 'scenes/urls'
 
-import { sourcesDataLogic } from 'products/data_warehouse/frontend/shared/logics/sourcesDataLogic'
-import { engineeringAnalyticsCiSignalsConfigUpdate } from 'products/engineering_analytics/frontend/generated/api'
 import { visionScannersList, visionScannersPartialUpdate } from 'products/replay_vision/frontend/generated/api'
-import { externalDataSchemasPartialUpdate } from 'products/warehouse_sources/frontend/generated/api'
 
-import type { PaginatedResponse } from '../../../../../frontend/src/lib/api'
 import type { FeatureFlagsSet } from '../../../../../frontend/src/lib/logic/featureFlagLogic'
 import type { IntegrationType, TeamPublicType, TeamType } from '../../../../../frontend/src/types'
-import type { ExternalDataSource } from '../../../../../frontend/src/types'
 import type { ReplayScannerApi } from '../../../../replay_vision/frontend/generated/api.schemas'
 import {
     signalsConfigCreate,
@@ -45,7 +40,7 @@ import type {
 import type { InboxOnboardingStepEnumApi } from '../../generated/api.schemas'
 import type { AgentRosterSource } from '../components/config/agentRosterMeta'
 import { captureInboxWelcomeManualSetupClicked, captureSignalSourceConnected } from '../inboxAnalytics'
-import { signalSourcesLogic, WAREHOUSE_SOURCE_SETUP, type WarehouseBackedSource } from '../signalSourcesLogic'
+import { signalSourcesLogic } from '../signalSourcesLogic'
 import type { SourceProductStatus } from '../signalSourcesLogic'
 import { INBOX_REPORT_SECTION_KEYS } from '../types'
 import type { SignalSourceConfig } from '../types'
@@ -83,8 +78,6 @@ export interface inboxSetupLogicValues {
     sourceConfigsLoading: boolean // signalSourcesLogic
     visionScanners: ReplayScannerApi[] | null // signalSourcesLogic
     visionScannersLoading: boolean // signalSourcesLogic
-    dataWarehouseSources: PaginatedResponse<ExternalDataSource> | null // sourcesDataLogic
-    dataWarehouseSourcesLoading: boolean // sourcesDataLogic
     currentTeam: TeamPublicType | TeamType | null // teamLogic
     currentTeamId: number | null // teamLogic
     activationDisabledReason: string | undefined
@@ -113,7 +106,6 @@ export interface inboxSetupLogicValues {
     scoutsLoading: boolean
     shouldResumeQuickSetup: boolean
     sourceCount: number
-    sourceSetupSource: WarehouseBackedSource | null
     sources: InboxSetupSource[]
     started: boolean
     usesFocusedSetup: boolean
@@ -132,9 +124,6 @@ export interface inboxSetupLogicActions {
     loadProductDataEvents: () => any // signalSourcesLogic
     loadSourceConfigs: () => any // signalSourcesLogic
     loadVisionScanners: () => any // signalSourcesLogic
-    loadSources: () => {
-        value: true
-    } // sourcesDataLogic
     activate: (activationSource?: 'button' | 'github_return' | 'retry') => {
         activationSource: 'button' | 'github_return' | 'retry'
     }
@@ -149,9 +138,6 @@ export interface inboxSetupLogicActions {
     }
     expose: (variant: 'control' | 'test-github' | 'test-ui') => {
         variant: 'control' | 'test-github' | 'test-ui'
-    }
-    finishSourceSetup: () => {
-        value: true
     }
     goToStep: (step: InboxOnboardingDraftApi['step']) => {
         step: InboxOnboardingStepEnumApi
@@ -173,9 +159,6 @@ export interface inboxSetupLogicActions {
     }
     openSetup: () => {
         value: true
-    }
-    openSourceSetup: (source: WarehouseBackedSource) => {
-        source: WarehouseBackedSource
     }
     patchDraft: (patch: Partial<InboxOnboardingDraftApi>) => {
         patch: Partial<InboxOnboardingDraftApi>
@@ -201,20 +184,17 @@ export interface inboxSetupLogicActions {
     setError: (
         error: string | null,
         failedOperation?: 'activation' | 'other' | 'scouts' | 'sources',
-        failureReason?: 'draft_save_failed' | 'github_redirect_failed' | 'source_connection_failed' | null
+        failureReason?: 'draft_save_failed' | 'github_redirect_failed' | null
     ) => {
         error: string | null
         failedOperation: 'activation' | 'other' | 'scouts' | 'sources'
-        failureReason: 'draft_save_failed' | 'github_redirect_failed' | 'source_connection_failed' | null
+        failureReason: 'draft_save_failed' | 'github_redirect_failed' | null
     }
     setSavedState: (state: InboxOnboardingStateApi) => {
         state: InboxOnboardingStateApi
     }
     setSaving: (saving: boolean) => {
         saving: boolean
-    }
-    setSourceSetupSource: (source: WarehouseBackedSource | null) => {
-        source: WarehouseBackedSource | null
     }
     startSetup: () => {
         value: true
@@ -266,9 +246,7 @@ export interface inboxSetupLogicMeta {
             sourceConfigs: SignalSourceConfig[] | null,
             productStatusBySource: Partial<Record<AgentRosterSource, SourceProductStatus>>,
             visionScanners: ReplayScannerApi[] | null,
-            featureFlags: FeatureFlagsSet,
-            currentTeam: TeamPublicType | TeamType | null,
-            dataWarehouseSources: PaginatedResponse<ExternalDataSource> | null
+            currentTeam: TeamPublicType | TeamType | null
         ) => InboxSetupSource[]
         draft: (
             editedDraft: InboxOnboardingDraftApi | null,
@@ -289,15 +267,13 @@ export interface inboxSetupLogicMeta {
             visionScanners: ReplayScannerApi[] | null,
             productDataEvents: Set<string> | null,
             integrationsLoading: boolean,
-            dataWarehouseSources: PaginatedResponse<ExternalDataSource> | null,
             draft: InboxOnboardingDraftApi,
             scoutsLoading: boolean
         ) => boolean
         refreshingSources: (
             sourceConfigsLoading: boolean,
             visionScannersLoading: boolean,
-            productDataEventsLoading: boolean,
-            dataWarehouseSourcesLoading: boolean
+            productDataEventsLoading: boolean
         ) => boolean
         inProgress: (savedState: InboxOnboardingStateApi | null, started: boolean, resumingSetup: boolean) => boolean
         completed: (savedState: InboxOnboardingStateApi | null) => boolean
@@ -357,8 +333,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 'productDataEvents',
                 'productDataEventsLoading',
             ],
-            sourcesDataLogic,
-            ['dataWarehouseSources', 'dataWarehouseSourcesLoading'],
             integrationsLogic,
             ['githubIntegrations', 'integrationsLoading'],
             scoutFleetLogic,
@@ -373,8 +347,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
             ['loadScoutConfigs', 'materializeScoutFleet', 'syncScoutFleet'],
             integrationsLogic,
             ['loadIntegrations'],
-            sourcesDataLogic,
-            ['loadSources'],
         ],
     })),
     actions({
@@ -382,9 +354,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
         startSetup: true,
         openSetup: true,
         refreshSources: true,
-        openSourceSetup: (source: WarehouseBackedSource) => ({ source }),
-        setSourceSetupSource: (source: WarehouseBackedSource | null) => ({ source }),
-        finishSourceSetup: true,
         reportInteraction: true,
         reportStepViewed: true,
         expose: (variant: 'control' | 'test-ui' | 'test-github') => ({ variant }),
@@ -404,7 +373,7 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
         setError: (
             error: string | null,
             failedOperation: 'activation' | 'sources' | 'scouts' | 'other' = 'other',
-            failureReason: 'draft_save_failed' | 'source_connection_failed' | 'github_redirect_failed' | null = null
+            failureReason: 'draft_save_failed' | 'github_redirect_failed' | null = null
         ) => ({
             error,
             failedOperation,
@@ -429,7 +398,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 loadSetupSuccess: (_, { savedState }) => savedState.draft,
             },
         ],
-        sourceSetupSource: [null as WarehouseBackedSource | null, { setSourceSetupSource: (_, { source }) => source }],
         saving: [false, { setSaving: (_, { saving }) => saving }],
         error: [
             null as string | null,
@@ -517,30 +485,14 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 treatment || !state?.completed_at || !!state.draft,
         ],
         sources: [
-            (s) => [
-                s.sourceConfigs,
-                s.productStatusBySource,
-                s.visionScanners,
-                s.featureFlags,
-                s.currentTeam,
-                s.dataWarehouseSources,
-            ],
+            (s) => [s.sourceConfigs, s.productStatusBySource, s.visionScanners, s.currentTeam],
             (
                 configs: SignalSourceConfig[] | null,
                 statuses: Partial<Record<AgentRosterSource, SourceProductStatus>>,
                 scanners: ReplayScannerApi[] | null,
-                flags: FeatureFlagsSet,
-                team: TeamPublicType | TeamType | null,
-                warehouseSources: PaginatedResponse<ExternalDataSource> | null
+                team: TeamPublicType | TeamType | null
             ): InboxSetupSource[] =>
-                setupSources(
-                    configs ?? [],
-                    statuses,
-                    scanners?.length ?? 0,
-                    flags,
-                    !!team?.ingested_event,
-                    warehouseSources?.results ?? null
-                ),
+                setupSources(configs ?? [], statuses, scanners?.length ?? 0, !!team?.ingested_event),
         ],
         draft: [
             (s) => [s.editedDraft, s.sources, s.visionScanners, s.scannerInventoryKnown, s.featureFlags],
@@ -578,7 +530,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 s.visionScanners,
                 s.productDataEvents,
                 s.integrationsLoading,
-                s.dataWarehouseSources,
                 s.draft,
                 s.scoutsLoading,
             ],
@@ -588,7 +539,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 scanners: ReplayScannerApi[] | null,
                 events: Set<string> | null,
                 integrationsLoading: boolean,
-                warehouseSources: PaginatedResponse<ExternalDataSource> | null,
                 draft: InboxOnboardingDraftApi,
                 scoutsLoading: boolean
             ): boolean =>
@@ -597,18 +547,11 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 scanners !== null &&
                 events !== null &&
                 !integrationsLoading &&
-                warehouseSources !== null &&
                 (draft.step !== 'scouts' || !scoutsLoading),
         ],
         refreshingSources: [
-            (s) => [
-                s.sourceConfigsLoading,
-                s.visionScannersLoading,
-                s.productDataEventsLoading,
-                s.dataWarehouseSourcesLoading,
-            ],
-            (configs: boolean, scanners: boolean, events: boolean, sources: boolean): boolean =>
-                configs || scanners || events || sources,
+            (s) => [s.sourceConfigsLoading, s.visionScannersLoading, s.productDataEventsLoading],
+            (configs: boolean, scanners: boolean, events: boolean): boolean => configs || scanners || events,
         ],
         inProgress: [
             (s) => [s.savedState, s.started, s.resumingSetup],
@@ -752,7 +695,7 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 actions.loadIntegrations()
                 cache.disposables.add(() => {
                     const refresh = (): void => {
-                        if (!values.saving && !values.sourceSetupSource && !values.refreshingSources) {
+                        if (!values.saving && !values.refreshingSources) {
                             actions.refreshSources()
                         }
                     }
@@ -769,65 +712,10 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 }
             },
             refreshSources: () => {
-                actions.loadSources()
                 actions.loadSourceConfigs()
                 actions.loadVisionScanners()
                 actions.loadProductDataEvents()
                 teamLogic.actions.loadCurrentTeam()
-            },
-            openSourceSetup: async ({ source }) => {
-                if (values.saving || !values.ready) {
-                    return
-                }
-                actions.reportInteraction()
-                actions.setSaving(true)
-                actions.setError(null)
-                try {
-                    await saveDraft()
-                    actions.setSourceSetupSource(source)
-                } catch {
-                    actions.setError(
-                        'Could not save your choices. Try again before connecting a source.',
-                        'other',
-                        'draft_save_failed'
-                    )
-                } finally {
-                    actions.setSaving(false)
-                }
-            },
-            finishSourceSetup: async () => {
-                const sourceKey = values.sourceSetupSource
-                if (values.saving || !sourceKey) {
-                    return
-                }
-                actions.setSaving(true)
-                actions.setError(null)
-                try {
-                    await sourcesDataLogic.asyncActions.loadSources()
-                    const source = values.sources.find((item) => item.definition.source === sourceKey)
-                    if (!source?.available) {
-                        throw new Error('Source is not connected')
-                    }
-                    actions.setEditedDraft({
-                        ...values.draft,
-                        sources: [
-                            ...values.draft.sources.filter(
-                                (item) => item.source_product !== source.definition.sourceProduct
-                            ),
-                            ...source.sources,
-                        ],
-                    })
-                    await saveDraft()
-                    actions.setSourceSetupSource(null)
-                } catch {
-                    actions.setError(
-                        'Could not confirm your source connection. Try again.',
-                        'other',
-                        'source_connection_failed'
-                    )
-                } finally {
-                    actions.setSaving(false)
-                }
             },
             [signalSourcesLogic.actionTypes.enableSourceProduct]: () => {
                 if (values.inProgress) {
@@ -835,8 +723,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 }
             },
             [signalSourcesLogic.actionTypes.enableSourceProductComplete]: () => actions.refreshSources(),
-            [sourcesDataLogic.actionTypes.loadSourcesFailure]: () =>
-                actions.setError('Could not load connected sources. Try again.', 'sources'),
             [scoutFleetLogic.actionTypes.syncScoutFleetFailure]: () => {
                 if (values.started) {
                     actions.setError('Could not prepare your scouts. Try again.', 'scouts')
@@ -982,7 +868,7 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 })
             },
             goToStep: async ({ step }) => {
-                if (values.saving || values.sourceSetupSource) {
+                if (values.saving) {
                     return
                 }
                 actions.reportInteraction()
@@ -1021,8 +907,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                 } else if (values.failedOperation === 'scouts') {
                     actions.setError(null)
                     actions.syncScoutFleet()
-                } else if (values.sourceSetupSource) {
-                    actions.finishSourceSetup()
                 } else if (values.ready) {
                     actions.goToStep(values.draft.step)
                 } else {
@@ -1105,38 +989,6 @@ export const inboxSetupLogic = kea<inboxSetupLogicType>([
                     }
                     // Disable the legacy default before enabling any work that could create a pull request.
                     await signalsConfigCreate(projectId, { autostart_enabled: false })
-                    for (const source of values.sources.filter((item) => item.warehouseSource)) {
-                        if (
-                            !draft.sources.some(
-                                (item) => item.source_product === source.definition.sourceProduct && item.enabled
-                            )
-                        ) {
-                            continue
-                        }
-                        const setup = WAREHOUSE_SOURCE_SETUP[source.warehouseSource!]
-                        const schemas = (values.dataWarehouseSources?.results ?? [])
-                            .filter((item) => item.source_type === setup.dwSourceType)
-                            .flatMap((item) => item.schemas ?? [])
-                        for (const table of setup.requiredTables) {
-                            const matches = schemas.filter(
-                                (schema) => schema.name === table || schema.name.endsWith(`.${table}`)
-                            )
-                            if (!matches.length) {
-                                throw new Error(`Missing required table: ${table}`)
-                            }
-                            for (const schema of matches.filter((item) => !item.should_sync)) {
-                                await externalDataSchemasPartialUpdate(projectId, schema.id, { should_sync: true })
-                            }
-                        }
-                    }
-                    const ciSources = draft.sources.filter(
-                        (source) => source.source_product === 'engineering_analytics'
-                    )
-                    if (ciSources.length) {
-                        await engineeringAnalyticsCiSignalsConfigUpdate(projectId, {
-                            enabled: ciSources.some((source) => source.enabled),
-                        })
-                    }
                     const currentSources = await signalsSourceConfigsList(projectId, { limit: 1000 })
                     for (const source of draft.sources) {
                         const existing = currentSources.results.find(

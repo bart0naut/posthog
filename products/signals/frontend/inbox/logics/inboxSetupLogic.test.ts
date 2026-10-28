@@ -42,8 +42,6 @@ describe('focused Inbox setup', () => {
     let sources: SignalSourceConfigApi[]
     let failCompletion: boolean
     let createdSources: number
-    let warehouseConnected: boolean
-    let syncedSchemas: number
     let canonicalScouts: SignalScoutConfigApi[]
     let enabledScouts: string[]
     let hasErrorTrackingData: boolean
@@ -57,8 +55,6 @@ describe('focused Inbox setup', () => {
         variant = 'test-ui'
         sources = []
         createdSources = 0
-        warehouseConnected = false
-        syncedSchemas = 0
         canonicalScouts = []
         enabledScouts = []
         hasErrorTrackingData = false
@@ -71,18 +67,6 @@ describe('focused Inbox setup', () => {
                 '/api/projects/:id': () => [200, { ...MOCK_DEFAULT_TEAM, ingested_event: hasEvents }],
                 '/api/projects/:id/signals/reports/available_reviewers/': {},
                 '/api/projects/:id/wizard/sessions/latest/': () => [204, null],
-                '/api/environments/:id/external_data_sources/': () => ({
-                    results: warehouseConnected
-                        ? [
-                              {
-                                  id: 'linear-source',
-                                  source_type: 'Linear',
-                                  schemas: [{ id: 'issues', name: 'issues', should_sync: false }],
-                              },
-                          ]
-                        : [],
-                    next: null,
-                }),
                 '/api/projects/:id/signals/onboarding/': () => ({
                     draft: savedDraft,
                     completed_at: completedAt,
@@ -171,11 +155,6 @@ describe('focused Inbox setup', () => {
                     const config = canonicalScouts.find((item) => item.id === params.config)!
                     Object.assign(config, await request.json())
                     return [200, config]
-                },
-                '/api/projects/:id/external_data_schemas/:schema/': async ({ request }) => {
-                    expect(await request.json()).toEqual({ should_sync: true })
-                    syncedSchemas++
-                    return [200, {}]
                 },
                 '/api/projects/:id/signals/source_configs/:source/': () => [200, sources[0]],
             },
@@ -656,32 +635,6 @@ describe('focused Inbox setup', () => {
         expect(logic.values.draft.step).toBe('github')
         expect(logic.values.isFinalStep).toBe(true)
         expect(logic.values.activationDisabledReason).toBeUndefined()
-    })
-
-    it('stages an inline connection without starting signals and preserves choices when confirmation is retried', async () => {
-        savedDraft = { ...draft, step: 'signals', sources: [{ ...draft.sources[0], enabled: false }] }
-        await expectLogic(logic, () => logic.actions.startSetup()).toFinishAllListeners()
-        await expectLogic(logic, () => logic.actions.openSourceSetup('linear')).toFinishAllListeners()
-        await expectLogic(logic, () => logic.actions.finishSourceSetup()).toFinishAllListeners()
-        expect(logic.values.sourceSetupSource).toBe('linear')
-        expect(logic.values.error).toBeTruthy()
-        expect(savedDraft?.sources).toEqual([{ ...draft.sources[0], enabled: false }])
-
-        warehouseConnected = true
-        await expectLogic(logic, () => logic.actions.finishSourceSetup()).toFinishAllListeners()
-        expect(logic.values.sourceSetupSource).toBeNull()
-        expect(savedDraft?.sources).toEqual([
-            { ...draft.sources[0], enabled: false },
-            { source_product: 'linear', source_type: 'issue', enabled: true },
-        ])
-        expect(createdSources).toBe(0)
-        expect(syncedSchemas).toBe(0)
-
-        failCompletion = false
-        await expectLogic(logic, () => logic.actions.activate()).toFinishAllListeners()
-        expect(logic.values.completed).toBe(true)
-        expect(createdSources).toBe(1)
-        expect(syncedSchemas).toBe(1)
     })
 
     it.each(['refresh', 'return'] as const)(

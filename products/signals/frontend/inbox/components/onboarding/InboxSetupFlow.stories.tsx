@@ -86,23 +86,6 @@ const meta: Meta<typeof InboxSetupFlow> = {
         mswDecorator({
             get: {
                 '/api/projects/:id/signals/reports/available_reviewers/': {},
-                '/api/environments/:id/external_data_sources/': { results: [], next: null, count: 0 },
-                '/api/environments/:id/external_data_sources/wizard/': {
-                    Zendesk: {
-                        name: 'Zendesk',
-                        label: 'Zendesk',
-                        iconPath: '/static/services/zendesk.png',
-                        fields: [
-                            { name: 'subdomain', label: 'Subdomain', type: 'text', required: true },
-                            { name: 'api_key', label: 'API token', type: 'password', required: true },
-                            { name: 'email_address', label: 'Email address', type: 'text', required: true },
-                        ],
-                        supportsColumnSelection: false,
-                        versions: [],
-                        defaultVersion: '',
-                        deprecatedVersions: [],
-                    },
-                },
                 '/api/projects/:id/signals/onboarding/': { draft, completed_at: null, variant: 'test-ui' },
                 '/api/projects/:id/signals/source_configs/': { results: [], next: null, count: 0 },
                 '/api/projects/:id/event_definitions/': {
@@ -253,7 +236,6 @@ export const BuiltInScouts: Story = {
                     'replay-vision',
                     'ai-observability',
                     'conversations',
-                    'data-warehouse',
                     'health-checks',
                 ].map((name) => ({
                     ...mockScoutConfigs[0],
