@@ -1399,7 +1399,7 @@ export const VisionScannersDraftCreateBody = /* @__PURE__ */ zod
             .unknown()
             .optional()
             .describe(
-                "A `RecordingsQuery` the person already chose, for example from the replay filters. The draft keeps it as the scanner's `query` and sizes the sampling dials against it, instead of drafting its own filter. A query with no filters watches every new recording. `date_from`\/`date_to` are dropped, because a scanner's schedule owns time. Omit to let the draft pick the sessions."
+                "A `RecordingsQuery` the person already chose, for example from the replay filters. The draft starts from it: when the goal asks for narrower recordings, it ANDs its own page, event, action or cohort filters onto it, and never removes or widens it. Those additions come back in `query_additions`, and the sampling dials are sized against the combined `query`. A query with no filters starts from every new recording. `date_from`\/`date_to` are dropped, because a scanner's schedule owns time. Omit to let the draft pick the sessions."
             ),
     })
     .describe("Body of POST \/vision\/scanners\/draft\/ — the user's goal, stated in their own words.")

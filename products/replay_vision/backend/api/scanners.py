@@ -2169,9 +2169,11 @@ class DraftScannerRequestSerializer(serializers.Serializer):
             required=False,
             help_text=(
                 "A `RecordingsQuery` the person already chose, for example from the replay filters. The draft "
-                "keeps it as the scanner's `query` and sizes the sampling dials against it, instead of drafting "
-                "its own filter. A query with no filters watches every new recording. `date_from`/`date_to` are "
-                "dropped, because a scanner's schedule owns time. Omit to let the draft pick the sessions."
+                "starts from it: when the goal asks for narrower recordings, it ANDs its own page, event, action "
+                "or cohort filters onto it, and never removes or widens it. Those additions come back in "
+                "`query_additions`, and the sampling dials are sized against the combined `query`. A query with "
+                "no filters starts from every new recording. `date_from`/`date_to` are dropped, because a "
+                "scanner's schedule owns time. Omit to let the draft pick the sessions."
             ),
         )
     )
@@ -2219,6 +2221,16 @@ class DraftScannerResponseSerializer(serializers.Serializer):
             allow_null=True,
             help_text=(
                 "`RecordingsQuery` narrowing which sessions get scanned; null when the draft targets every session."
+            ),
+        )
+    )
+    query_additions = extend_schema_field(RecordingsQuery)(  # type: ignore[arg-type, type-var]
+        serializers.JSONField(
+            allow_null=True,
+            help_text=(
+                "When the request passed a `query`: the filters the draft ANDed onto it, which `query` already "
+                "includes. Show them to the person as added by AI. Null when nothing was added or no `query` "
+                "was passed."
             ),
         )
     )
@@ -3601,6 +3613,8 @@ class ReplayScannerViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, vi
                 "scanner_type": drafted.scanner_type,
                 # Whether the goal mapped to a real filter or fell back to no targeting.
                 "has_query": bool(drafted.query),
+                # Whether the draft narrowed a query the person chose, rather than keeping it as is.
+                "query_extended": bool(drafted.query_additions),
                 "has_experiment_targeting": drafted.scanner_type == ScannerType.EXPERIMENT,
                 "experiment_picked": experiment_id is not None,
                 "sampling_mode": drafted.sampling_mode,
@@ -3622,6 +3636,7 @@ class ReplayScannerViewSet(TeamAndOrgViewSetMixin, AccessControlViewSetMixin, vi
                     "scanner_config": drafted.scanner_config,
                     "rationale": drafted.rationale,
                     "query": drafted.query,
+                    "query_additions": drafted.query_additions,
                     "sampling_mode": drafted.sampling_mode,
                     "sampling_rate": drafted.sampling_rate,
                     "model": drafted.model,

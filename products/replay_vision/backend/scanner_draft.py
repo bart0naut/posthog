@@ -288,6 +288,8 @@ class ScannerDraft:
     model: str | None = None
     credit_limit: int | None = None
     free_only: bool = False
+    # The filters the draft ANDed onto a query the user chose. None when nothing was chosen or added.
+    query_additions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -871,11 +873,13 @@ def _build_user_content(
                 "chosen-recordings",
                 [json.dumps(pinned_query, separators=(",", ":"), sort_keys=True)],
                 source=(
-                    "the recording filter the user already chose, as a RecordingsQuery. The scanner watches "
-                    "only new recordings that match it, or every new recording when it has no filters. Leave "
-                    "every other filter_ field empty, but still set filter_experiment and "
-                    "filter_experiment_variant when the goal names an experiment or one of its variants, and "
-                    "write the scanner for these recordings"
+                    "the recording filter the user already chose, as a RecordingsQuery. The scanner starts "
+                    "from it and always keeps it; with no filters it starts from every new recording. When "
+                    "the goal asks for narrower recordings than this filter holds, such as one page, event, "
+                    "action or cohort, set the filter_ fields for that. Each one you set is ANDed with this "
+                    "filter, so it can only remove recordings. Do not repeat a condition this filter already "
+                    "has, keep filter_events_match at all, and leave the filter_ fields empty when this "
+                    "filter already fits the goal"
                 ),
             )
         )
@@ -1741,8 +1745,9 @@ def draft_scanner_from_goal(
     """Ground the goal in the team's real pages, draft the whole scanner in one
     model call, then solve the sampling dials from the stated monthly credit budget.
 
-    `pinned_query` is a recording filter the user already chose. The draft keeps it as the query and
-    sizes the dials against it, so the grounding reads that only serve the drafted filter are skipped.
+    `pinned_query` is a recording filter the user already chose. The draft starts from it: whatever
+    the model filters on is ANDed onto it, so the scanner can only watch fewer recordings than the user
+    chose. When the additions match no recent recordings, the draft falls back to the chosen filter.
 
     `free_only` drafts a scanner that runs only on the organization's free credits. The caller then
     passes those free credits as `monthly_credit_budget`, and the draft carries no credit limit.
@@ -1829,8 +1834,7 @@ def draft_scanner_from_goal(
         # session. Offered without a count instead, the way an unmeasured event reads.
         survey_events = [replace(c, sessions=None) if c.sessions == 0 else c for c in measure(injected)]
 
-    if pinned_query is None:
-        _run_concurrently([read_pages, read_goal_events, read_entities], thread_name_prefix="vision-draft-grounding")
+    _run_concurrently([read_pages, read_goal_events, read_entities], thread_name_prefix="vision-draft-grounding")
     # A survey event wins a name both lists hold, so it keeps its exemption from the dead-event drop.
     survey_names = {c.name for c in survey_events}
     measured = [*survey_events, *(c for c in goal_events if c.name not in survey_names)]
@@ -1879,8 +1883,10 @@ def draft_scanner_from_goal(
         name=_free_scanner_name(team.id, draft.name),
         credit_limit=None if free_only else monthly_credit_budget,
         free_only=free_only,
-        query=pinned_query if pinned_query is not None else draft.query,
     )
+    if pinned_query is not None:
+        extended, additions = _extend_chosen_query(pinned_query, draft.query)
+        draft = replace(draft, query=extended, query_additions=additions)
 
     def solve(query: dict[str, Any] | None) -> _BudgetSolution:
         return _solve_budget(
@@ -1897,8 +1903,12 @@ def draft_scanner_from_goal(
         )
 
     # Started next to the draft's own estimate, so a filter that matches nothing costs no second wait.
-    # The user's own filter is never swapped for a wider one, even when it matches nothing yet.
-    fallback = None if pinned_query is not None else _pages_only(draft.query)
+    # A chosen filter is never widened: its fallback drops only the draft's additions, and with none
+    # there is nothing to fall back to, even when the filter matches nothing yet.
+    if pinned_query is not None:
+        fallback = pinned_query if draft.query_additions else None
+    else:
+        fallback = _pages_only(draft.query)
     if fallback == draft.query:
         fallback = None
 
@@ -1918,15 +1928,54 @@ def draft_scanner_from_goal(
         return replace(draft, sampling_mode=None, sampling_rate=None, estimated_monthly_observations=None)
     if solution.estimated_monthly_observations == 0 and fallback is not None and relaxed is not None:
         if (relaxed_solution := relaxed()) is not None:
-            draft, solution = _fall_back_to_pages(
-                team=team, draft=draft, solution=solution, fallback=fallback, relaxed=relaxed_solution
-            )
+            if pinned_query is not None:
+                if relaxed_solution.estimated_monthly_observations > 0:
+                    draft = replace(
+                        draft,
+                        query=pinned_query,
+                        query_additions=None,
+                        rationale=_rationale_with_note(
+                            draft.rationale,
+                            "The filters added to yours matched no recent recordings, so this watches the "
+                            "recordings you picked.",
+                        ),
+                    )
+                    solution = relaxed_solution
+            else:
+                draft, solution = _fall_back_to_pages(
+                    team=team, draft=draft, solution=solution, fallback=fallback, relaxed=relaxed_solution
+                )
     return replace(
         draft,
         sampling_mode=solution.sampling_mode,
         sampling_rate=solution.sampling_rate,
         estimated_monthly_observations=solution.estimated_monthly_observations,
     )
+
+
+def _extend_chosen_query(
+    chosen: dict[str, Any], drafted: dict[str, Any] | None
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The chosen query narrowed by the drafted filters, and the filters that were actually added.
+
+    Each added page, cohort, event or action is ANDed with the chosen filters, so the scanner can only
+    watch fewer recordings than the user chose. An OR operand on either side would join the additions
+    with an OR and widen the scan, so then the additions are dropped and the chosen query comes back
+    unchanged. A condition the chosen query already holds is not added twice.
+    """
+    if not drafted or chosen.get("operand") == "OR" or drafted.get("operand") == "OR":
+        return chosen, None
+    extended = dict(chosen)
+    additions: dict[str, Any] = {"kind": "RecordingsQuery"}
+    for key in ("properties", "events", "actions"):
+        existing = list(chosen.get(key) or [])
+        added = [item for item in drafted.get(key) or [] if item not in existing]
+        if added:
+            extended[key] = [*existing, *added]
+            additions[key] = added
+    if len(additions) == 1:
+        return chosen, None
+    return extended, additions
 
 
 def _pages_only(query: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1992,12 +2041,16 @@ def _fallback_rationale(rationale: str, *, dropped_events: int, dropped_actions:
 
     The rationale still describes the filter the model picked, so leaving it alone would tell the
     user this scanner watches something it no longer watches.
-
-    Trims the model's own text rather than the note, so the note cannot be cut in half by the cap.
     """
     if dropped_events and dropped_actions:
         filters = "event and action filters"
     else:
         filters = "event filter" if dropped_events else "action filter"
-    note = f"The {filters} matched no recent recordings, so this scans the pages instead."
+    return _rationale_with_note(
+        rationale, f"The {filters} matched no recent recordings, so this scans the pages instead."
+    )
+
+
+def _rationale_with_note(rationale: str, note: str) -> str:
+    """Trims the model's own text rather than the note, so the note cannot be cut in half by the cap."""
     return f"{rationale[: _MAX_RATIONALE_LENGTH - len(note) - 1].strip()} {note}".strip()

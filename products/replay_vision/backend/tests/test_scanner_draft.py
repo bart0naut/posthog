@@ -41,6 +41,7 @@ from products.replay_vision.backend.scanner_draft import (
     _events_for_goal,
     _existing_scanners,
     _ExistingScanner,
+    _extend_chosen_query,
     _finalize,
     _generate,
     _goal_entity_matches,
@@ -513,6 +514,7 @@ class TestDraftScannerEndpoint(_VisionAPITestCase):
             },
             "rationale": "A classifier fits because you want the mix of visit intents, not a single yes/no.",
             "query": {"kind": "RecordingsQuery", "filter_test_accounts": True},
+            "query_additions": None,
             "sampling_mode": "comprehensive",
             "sampling_rate": 1.0,
             "model": "gemini-3-flash-preview",
@@ -1045,6 +1047,35 @@ class TestMeasuredEvents(_VisionAPITestCase):
             measured = _measured_events(self.team, ["scanner_created"])
 
         assert measured == [_CandidateEvent(name="scanner_created", sessions=None)]
+
+
+class TestExtendChosenQuery:
+    _CHOSEN = {
+        "kind": "RecordingsQuery",
+        "properties": [{"type": "recording", "key": "visited_page", "value": "/billing", "operator": "icontains"}],
+    }
+    _EVENT = {"id": "billing_limit_set", "name": "billing_limit_set", "type": "events", "order": 0}
+
+    @parameterized.expand(
+        [
+            # An OR on either side would join the additions with an OR and widen the scan.
+            ("chosen OR", {**_CHOSEN, "operand": "OR"}, {"kind": "RecordingsQuery", "events": [_EVENT]}),
+            ("drafted OR", _CHOSEN, {"kind": "RecordingsQuery", "events": [_EVENT, _EVENT], "operand": "OR"}),
+            # A condition the chosen query already has adds nothing.
+            ("repeat only", _CHOSEN, {"kind": "RecordingsQuery", "properties": _CHOSEN["properties"]}),
+            ("nothing drafted", _CHOSEN, None),
+        ]
+    )
+    def test_keeps_the_chosen_query_when_nothing_can_narrow_it(self, _name, chosen, drafted):
+        assert _extend_chosen_query(chosen, drafted) == (chosen, None)
+
+    def test_ands_new_conditions_and_reports_only_those(self):
+        drafted = {"kind": "RecordingsQuery", "properties": self._CHOSEN["properties"], "events": [self._EVENT]}
+
+        extended, additions = _extend_chosen_query(self._CHOSEN, drafted)
+
+        assert extended == {**self._CHOSEN, "events": [self._EVENT]}
+        assert additions == {"kind": "RecordingsQuery", "events": [self._EVENT]}
 
 
 class TestDraftQuery:
@@ -1753,23 +1784,38 @@ class TestDraftScannerFromGoal(_VisionAPITestCase):
         assert [e["id"] for e in draft.query["events"]] == ["billing_limit_set"]
         assert draft.estimated_monthly_observations == 0
 
-    def test_a_chosen_query_is_kept_even_when_it_matches_nothing(self):
-        # The user picked these filters, so neither the drafted filter nor the pages fallback may
-        # replace them: either would save a scanner watching recordings the user never chose.
+    @parameterized.expand(
+        [
+            # The goal asks for narrower recordings than the chosen filter, so the draft ANDs an event onto it.
+            ("adds a narrowing filter", ["billing_limit_set"], lambda query: False, True),
+            # Additions that match nothing fall back to the chosen filter, never to anything wider.
+            ("drops additions that match nothing", ["billing_limit_set"], lambda query: bool(query.events), False),
+            # A chosen filter that matches nothing yet is kept, because the user picked it.
+            ("keeps a chosen filter that matches nothing", [], lambda query: True, False),
+        ]
+    )
+    def test_a_chosen_query_is_the_starting_point(self, _name, drafted_events, dead_when, extended):
+        EventDefinition.objects.create(team=self.team, name="billing_limit_set", last_seen_at=timezone.now())
         chosen = {
             "kind": "RecordingsQuery",
             "properties": [{"type": "recording", "key": "visited_page", "value": "/billing", "operator": "icontains"}],
-            "events": [{"id": "billing_limit_set", "type": "events", "order": 0, "name": "billing_limit_set"}],
         }
 
         draft = self._drafted_with(
-            _draft(filter_pages=["/billing"]),
-            self._estimate_by_query(lambda query: bool(query.events)),
+            _draft(filter_events=drafted_events),
+            self._estimate_by_query(dead_when),
             pinned_query=chosen,
         )
 
-        assert draft.query == chosen
-        assert draft.estimated_monthly_observations == 0
+        if extended:
+            assert draft.query is not None
+            assert draft.query["properties"] == chosen["properties"]
+            assert [e["id"] for e in draft.query["events"]] == ["billing_limit_set"]
+            assert draft.query_additions is not None
+            assert [e["id"] for e in draft.query_additions["events"]] == ["billing_limit_set"]
+        else:
+            assert draft.query == chosen
+            assert draft.query_additions is None
 
     def test_a_measured_dead_event_is_dropped_before_it_can_zero_the_scan(self):
         # billing_limit_set is a real definition, so grounding's definition-lookup fallback would
