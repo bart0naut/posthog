@@ -2837,6 +2837,8 @@ export namespace Schemas {
       inCohortVia?: InCohortVia | null;
       inlineCohortCalculation?: InlineCohortCalculation | null;
       materializationMode?: MaterializationMode | null;
+      /** Reuse eligible bounded event aggregates within one query execution. When unset, the server may enable it via the cloud feature flag. */
+      materializeRepeatedCTEs?: boolean | null;
       materializedColumnsOptimizationMode?: MaterializedColumnsOptimizationMode | null;
       /** Merge sibling aggregating LEFT JOINs over federated Postgres tables into one UNION ALL join, so their scans overlap */
       mergeFederatedAggregateJoins?: boolean | null;
@@ -26122,6 +26124,20 @@ export namespace Schemas {
       token: string;
     }
 
+    /**
+     * * `info` - Info
+     * * `warn` - Warn
+     * * `error` - Error
+     */
+    export type ConsoleLogLevelEnum = typeof ConsoleLogLevelEnum[keyof typeof ConsoleLogLevelEnum];
+
+
+    export const ConsoleLogLevelEnum = {
+      Info: 'info',
+      Warn: 'warn',
+      Error: 'error',
+    } as const;
+
     export interface ContentAutopilotBriefCompetitor {
       /** Product to compare against. */
       name: string;
@@ -40682,6 +40698,14 @@ export namespace Schemas {
       readonly created_at: string;
       /** @nullable */
       readonly updated_at: string | null;
+    }
+
+    export interface EdgeSummary {
+      readonly id: string;
+      /** ID of the upstream node. */
+      readonly source_id: string;
+      /** ID of the downstream node. */
+      readonly target_id: string;
     }
 
     export interface ReviewerState {
@@ -76861,13 +76885,13 @@ export namespace Schemas {
       results: EarlyAccessFeature[];
     }
 
-    export interface PaginatedEdgeList {
+    export interface PaginatedEdgeSummaryList {
       count: number;
       /** @nullable */
       next?: string | null;
       /** @nullable */
       previous?: string | null;
-      results: Edge[];
+      results: EdgeSummary[];
     }
 
     export interface PaginatedElementList {
@@ -79810,6 +79834,80 @@ export namespace Schemas {
     } as const;
 
     /**
+     * * `claude` - Claude
+     * * `codex` - Codex
+     * * `pi` - Pi
+     */
+    export type StartupProviderEnum = typeof StartupProviderEnum[keyof typeof StartupProviderEnum];
+
+
+    export const StartupProviderEnum = {
+      Claude: 'claude',
+      Codex: 'codex',
+      Pi: 'pi',
+    } as const;
+
+    /**
+     * * `session_setup` - Session setup
+     * * `sdk_initialization` - SDK initialization
+     * * `setup_hooks` - Setup hooks
+     */
+    export type StartupPhaseEnum = typeof StartupPhaseEnum[keyof typeof StartupPhaseEnum];
+
+
+    export const StartupPhaseEnum = {
+      SessionSetup: 'session_setup',
+      SdkInitialization: 'sdk_initialization',
+      SetupHooks: 'setup_hooks',
+    } as const;
+
+    /**
+     * * `requires_action` - Requires action
+     * * `transient` - Transient
+     * * `unknown` - Unknown
+     */
+    export type StartupRetryabilityEnum = typeof StartupRetryabilityEnum[keyof typeof StartupRetryabilityEnum];
+
+
+    export const StartupRetryabilityEnum = {
+      RequiresAction: 'requires_action',
+      Transient: 'transient',
+      Unknown: 'unknown',
+    } as const;
+
+    export interface ReportStartupFailure {
+      /** Agent provider that failed to start.
+       *
+       * * `claude` - Claude
+       * * `codex` - Codex
+       * * `pi` - Pi */
+      provider: StartupProviderEnum;
+      /** Startup stage that failed.
+       *
+       * * `session_setup` - Session setup
+       * * `sdk_initialization` - SDK initialization
+       * * `setup_hooks` - Setup hooks */
+      phase: StartupPhaseEnum;
+      /**
+         * Validated provider reason code, when available.
+         * @nullable
+         */
+      reason: string | null;
+      /** Whether an unchanged startup can be retried.
+       *
+       * * `requires_action` - Requires action
+       * * `transient` - Transient
+       * * `unknown` - Unknown */
+      retryability: StartupRetryabilityEnum;
+      /** Research task that could not start. */
+      task_id: string;
+      /** Failed research task run. */
+      run_id: string;
+      /** Safe explanation and suggested next action. */
+      message: string;
+    }
+
+    /**
      * Snapshot-only metric shape for report lists.
      *
      * Omitting query definitions keeps the paginated inbox payload bounded.
@@ -80315,6 +80413,8 @@ export namespace Schemas {
       readonly signals_at_run: number;
       /** How many scout notes this report received beyond the few its work log keeps as entries. 0 when nothing was dropped. These say the finding still holds, so the count is shown in place of the entries. */
       readonly collapsed_note_count: number;
+      /** Startup failure from the latest failed research attempt, when available. */
+      readonly startup_failure: ReportStartupFailure | null;
       readonly created_at: string;
       readonly updated_at: string;
       readonly artefact_count: number;
@@ -92257,6 +92357,26 @@ export namespace Schemas {
     }
 
     /**
+     * Supabase email action type to the id of the email template that sends it. Each template must be transactional and marked sensitive. This replaces the whole mapping: include every type to keep, and leave a type out to unmap it. A core auth email with no template fails in Supabase, and a notification with no template is skipped. Valid action types: signup, invite, magiclink, email, recovery, email_change, reauthentication, password_changed_notification, email_changed_notification, phone_changed_notification, identity_linked_notification, identity_unlinked_notification, mfa_factor_enrolled_notification, mfa_factor_unenrolled_notification.
+     */
+    export type PatchedSupabaseAuthEmailSettingsUpdateTemplates = {[key: string]: string};
+
+    export interface PatchedSupabaseAuthEmailSettingsUpdate {
+      /**
+         * The Supabase project URL, such as https://abcdefgh.supabase.co, from the project's API settings in the Supabase dashboard. It must use https.
+         * @maxLength 200
+         */
+      supabase_url?: string;
+      /**
+         * The Send Email Hook secret, starting with v1,whsec_. Supabase generates it under Authentication, Hooks, Send Email hook. Leave it out to keep the stored secret.
+         * @maxLength 500
+         */
+      hook_secret?: string;
+      /** Supabase email action type to the id of the email template that sends it. Each template must be transactional and marked sensitive. This replaces the whole mapping: include every type to keep, and leave a type out to unmap it. A core auth email with no template fails in Supabase, and a notification with no template is skipped. Valid action types: signup, invite, magiclink, email, recovery, email_change, reauthentication, password_changed_notification, email_changed_notification, phone_changed_notification, identity_linked_notification, identity_unlinked_notification, mfa_factor_enrolled_notification, mfa_factor_unenrolled_notification. */
+      templates?: PatchedSupabaseAuthEmailSettingsUpdateTemplates;
+    }
+
+    /**
      * * `once` - once
      * * `recurring` - recurring
      * * `always` - always
@@ -103133,6 +103253,8 @@ export namespace Schemas {
       readonly signals_at_run: number;
       /** How many scout notes this report received beyond the few its work log keeps as entries. 0 when nothing was dropped. These say the finding still holds, so the count is shown in place of the entries. */
       readonly collapsed_note_count: number;
+      /** Startup failure from the latest failed research attempt, when available. */
+      readonly startup_failure: ReportStartupFailure | null;
       readonly created_at: string;
       readonly updated_at: string;
       readonly artefact_count: number;
@@ -109183,7 +109305,7 @@ export namespace Schemas {
     }
 
     export interface SearchSuggestionsResponse {
-      /** Up to 4 example searches naming themes in recent observations. Empty until a scheduled refresh has run for a scanner someone viewed. */
+      /** Up to 4 example searches naming the largest active themes in recent issue observations. Empty until a scanner has a named theme. */
       queries: string[];
     }
 
@@ -109672,6 +109794,32 @@ export namespace Schemas {
       total_requested: number;
       /** Session IDs that were found but could not be deleted. These can be retried. */
       failed_ids: string[];
+    }
+
+    export interface SessionRecordingConsoleLogEntry {
+      /** When the browser logged the message. */
+      timestamp: string;
+      /** Console level of the message.
+       *
+       * * `info` - Info
+       * * `warn` - Warn
+       * * `error` - Error */
+      level: ConsoleLogLevelEnum;
+      /** The logged text. String arguments are joined with spaces, and non-string arguments are left out. Cut to 3000 characters. */
+      message: string;
+      /** True when the message was cut to fit the length limit. */
+      truncated: boolean;
+    }
+
+    export interface SessionRecordingConsoleLogsResponse {
+      /** Console log entries in chronological order. */
+      results: SessionRecordingConsoleLogEntry[];
+      /** True when more entries exist after this page. */
+      has_more: boolean;
+      /** Whether the project captures console logs now. When false, an empty result means that nothing was captured, not that the session had no console output. */
+      console_log_capture_enabled: boolean;
+      /** True when the recording started longer ago than the console log retention period. The recording can still exist after its console log entries are deleted. Entries expire one at a time, so a recording close to the retention period can already miss its earliest entries while this is false. */
+      logs_expired: boolean;
     }
 
     export type SessionReplayListWidgetCatalogEntryOpenApiWidgetType = typeof SessionReplayListWidgetCatalogEntryOpenApiWidgetType[keyof typeof SessionReplayListWidgetCatalogEntryOpenApiWidgetType];
@@ -110245,6 +110393,22 @@ export namespace Schemas {
       /** One entry per requested report the caller can read whose status is ready or pending_input, in request order. A report in any other status has no entry. A metric whose snapshot was fresh, whose query failed, or whose budget ran out keeps its previous snapshot; merge by metric_id. */
       readonly reports: readonly SignalReportMetricSnapshots[];
     }
+
+    /**
+     * * `sufficient` - Sufficient
+     * * `insufficient` - Insufficient
+     * * `unsupported` - Unsupported
+     * * `errored` - Errored
+     */
+    export type SignalReportMonitoringResultEvidenceStatusEnum = typeof SignalReportMonitoringResultEvidenceStatusEnum[keyof typeof SignalReportMonitoringResultEvidenceStatusEnum];
+
+
+    export const SignalReportMonitoringResultEvidenceStatusEnum = {
+      Sufficient: 'sufficient',
+      Insufficient: 'insufficient',
+      Unsupported: 'unsupported',
+      Errored: 'errored',
+    } as const;
 
     export interface SignalReportPriorityUpdate {
       /** New report priority, from P0 (critical) to P4 (minimal).
@@ -116717,6 +116881,53 @@ export namespace Schemas {
       interesting_notes: InterestingNote[];
     }
 
+    export interface SubmitMonitoringResultRequest {
+      /** Whether the fixed-window evidence is sufficient, insufficient, unsupported, or errored.
+       *
+       * * `sufficient` - Sufficient
+       * * `insufficient` - Insufficient
+       * * `unsupported` - Unsupported
+       * * `errored` - Errored */
+      evidence_status: SignalReportMonitoringResultEvidenceStatusEnum;
+      /**
+         * Explain why the evidence supports this qualification. Must not be blank.
+         * @minLength 1
+         * @maxLength 2000
+         */
+      evidence_reason: string;
+      /**
+         * Whether the authored expectation holds: a boolean for sufficient evidence, null for unsupported or errored evidence.
+         * @nullable
+         */
+      expectation_matches: boolean | null;
+      /**
+         * Explain the conclusion using evidence from the assignment's fixed window.
+         * @minLength 1
+         * @maxLength 16000
+         */
+      explanation: string;
+      /**
+         * Evidence references supporting the conclusion, or an empty list when none are available.
+         * @maxItems 50
+         * @items.minLength 1
+         */
+      evidence_refs: string[];
+    }
+
+    export interface SubmitMonitoringResultResponse {
+      /** True when the result is stored, including an identical retry. */
+      accepted: boolean;
+      /** The immutable Monitoring result's identifier. */
+      result_id: string;
+      /** The recorded verdict; this does not change the report's status.
+       *
+       * * `passed` - Passed
+       * * `failed` - Failed
+       * * `errored` - Errored
+       * * `inconclusive` - Inconclusive */
+      outcome: SignalReportCheckOutcomeEnum;
+    }
+
     export type SubscriptionWriteContextsItem = {
       /** @minimum 1 */
       dashboard_id: number;
@@ -116931,6 +117142,84 @@ export namespace Schemas {
       text_repr: string;
       /** Metadata about the summarization */
       metadata?: unknown;
+    }
+
+    /**
+     * Supabase email action type (such as `signup` or `recovery`) to the transactional message template that sends it. An auth email with no template fails in Supabase.
+     */
+    export type SupabaseAuthEmailSettingsTemplates = {[key: string]: string};
+
+    /**
+     * * `signup` - Confirm sign up
+     * * `invite` - Invite user
+     * * `magiclink` - Magic link
+     * * `email` - Email sign-in code
+     * * `recovery` - Reset password
+     * * `email_change` - Change email address
+     * * `reauthentication` - Reauthentication
+     * * `password_changed_notification` - Password changed
+     * * `email_changed_notification` - Email address changed
+     * * `phone_changed_notification` - Phone number changed
+     * * `identity_linked_notification` - Sign-in method linked
+     * * `identity_unlinked_notification` - Sign-in method removed
+     * * `mfa_factor_enrolled_notification` - MFA method added
+     * * `mfa_factor_unenrolled_notification` - MFA method removed
+     */
+    export type SupabaseEmailActionTypeEnum = typeof SupabaseEmailActionTypeEnum[keyof typeof SupabaseEmailActionTypeEnum];
+
+
+    export const SupabaseEmailActionTypeEnum = {
+      Signup: 'signup',
+      Invite: 'invite',
+      Magiclink: 'magiclink',
+      Email: 'email',
+      Recovery: 'recovery',
+      EmailChange: 'email_change',
+      Reauthentication: 'reauthentication',
+      PasswordChangedNotification: 'password_changed_notification',
+      EmailChangedNotification: 'email_changed_notification',
+      PhoneChangedNotification: 'phone_changed_notification',
+      IdentityLinkedNotification: 'identity_linked_notification',
+      IdentityUnlinkedNotification: 'identity_unlinked_notification',
+      MfaFactorEnrolledNotification: 'mfa_factor_enrolled_notification',
+      MfaFactorUnenrolledNotification: 'mfa_factor_unenrolled_notification',
+    } as const;
+
+    export interface SupabaseEmailType {
+      /** The `email_action_type` Supabase sends for this email.
+       *
+       * * `signup` - Confirm sign up
+       * * `invite` - Invite user
+       * * `magiclink` - Magic link
+       * * `email` - Email sign-in code
+       * * `recovery` - Reset password
+       * * `email_change` - Change email address
+       * * `reauthentication` - Reauthentication
+       * * `password_changed_notification` - Password changed
+       * * `email_changed_notification` - Email address changed
+       * * `phone_changed_notification` - Phone number changed
+       * * `identity_linked_notification` - Sign-in method linked
+       * * `identity_unlinked_notification` - Sign-in method removed
+       * * `mfa_factor_enrolled_notification` - MFA method added
+       * * `mfa_factor_unenrolled_notification` - MFA method removed */
+      value: SupabaseEmailActionTypeEnum;
+      /** What the email is for, in words a person reads. */
+      label: string;
+      /** Whether creating starter templates makes a template for this email. */
+      has_starter_template: boolean;
+    }
+
+    export interface SupabaseAuthEmailSettings {
+      /** The Supabase project URL, such as https://abcdefgh.supabase.co. Confirmation links point at its /auth/v1/verify endpoint. */
+      supabase_url: string;
+      /** Whether a Send Email Hook secret is stored. The secret itself is never returned. */
+      has_hook_secret: boolean;
+      /** Supabase email action type (such as `signup` or `recovery`) to the transactional message template that sends it. An auth email with no template fails in Supabase. */
+      templates: SupabaseAuthEmailSettingsTemplates;
+      /** The URL to paste into Supabase as the HTTPS endpoint of the Send Email Hook. */
+      hook_url: string;
+      /** Every email Supabase can send through the hook, core auth emails first. */
+      email_types: SupabaseEmailType[];
     }
 
     /**
@@ -120849,6 +121138,13 @@ export namespace Schemas {
       hasError: boolean;
     }
 
+    export interface TraceGit {
+      /** The git branch checked out when the trace ran. */
+      branch: string;
+      /** The repository as owner/name, or null when the branch's event has none. */
+      repo: string | null;
+    }
+
     export interface Trace {
       id: string;
       name: string | null;
@@ -120864,6 +121160,8 @@ export namespace Schemas {
       threadNodeIds: string[];
       defaultNodeId: string;
       nodeIdsByAlias: TraceNodeIdsByAlias;
+      /** The branch the trace's work ran on: the latest stamped branch other than main or master, else the first stamp. Null when no event carries a branch. */
+      git: TraceGit | null;
     }
 
     export type TraceEvaluationResultOutcomeEnum = typeof TraceEvaluationResultOutcomeEnum[keyof typeof TraceEvaluationResultOutcomeEnum];
@@ -121071,10 +121369,8 @@ export namespace Schemas {
       file: string;
       /** Owning team slug from the repository's ownership files, or 'unowned' when the test's file cannot be placed or no team claims its path. */
       owner_team: string;
-      /** Trunk's current health verdict on the test, e.g. 'FLAKY' or 'BROKEN'. */
+      /** Trunk's current health verdict on the test, e.g. 'flaky' or 'broken'. */
       status: string;
-      /** How the quarantine was applied in Trunk, e.g. 'AUTO_QUARANTINE'. */
-      quarantine_setting: string;
       /** When Trunk quarantined the test. */
       quarantined_at: string;
       /** Whole days since the quarantine started. */
@@ -121082,7 +121378,7 @@ export namespace Schemas {
       /** True once age_days exceeds ttl_days: the quarantine has outlived the TTL. */
       overdue: boolean;
       /**
-         * The Trunk app's page for this test; null when the connected source has no organization slug or the row carries no test case id.
+         * The Trunk app's page for this test; null when Trunk returned no URL and the source has no organization slug or the row carries no test id.
          * @nullable
          */
       trunk_url: string | null;
@@ -139592,6 +139888,46 @@ export namespace Schemas {
      */
     offset?: number;
     };
+
+    export type SessionRecordingsConsoleLogsRetrieveParams = {
+    /**
+     * Only return entries at or after this ISO 8601 timestamp. The results never extend outside the recording's own start and end time.
+     */
+    after?: string;
+    /**
+     * Only return entries at or before this ISO 8601 timestamp. The results never extend outside the recording's own start and end time.
+     */
+    before?: string;
+    /**
+     * Only return entries at this level. Omit to return every level.
+     *
+     * * `info` - Info
+     * * `warn` - Warn
+     * * `error` - Error
+     * @minLength 1
+     */
+    level?: SessionRecordingsConsoleLogsRetrieveLevel;
+    /**
+     * Maximum number of entries to return (1-500, default 100).
+     * @minimum 1
+     * @maximum 500
+     */
+    limit?: number;
+    /**
+     * Number of entries to skip. Use with `limit` to page through a long recording.
+     * @minimum 0
+     */
+    offset?: number;
+    };
+
+    export type SessionRecordingsConsoleLogsRetrieveLevel = typeof SessionRecordingsConsoleLogsRetrieveLevel[keyof typeof SessionRecordingsConsoleLogsRetrieveLevel];
+
+
+    export const SessionRecordingsConsoleLogsRetrieveLevel = {
+      Info: 'info',
+      Warn: 'warn',
+      Error: 'error',
+    } as const;
 
     export type SignalsActivitySummaryVersionsRetrieveParams = {
     /**
