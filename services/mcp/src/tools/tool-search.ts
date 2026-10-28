@@ -3,14 +3,16 @@ export interface SearchableTool {
     name: string
     title: string
     description: string
+    /** Extra words for the tool's job that the other fields do not contain, such as a vendor name. */
+    searchKeywords?: readonly string[]
 }
 
-const SEARCH_FIELD_WEIGHT = { name: 3, title: 2, description: 1 } as const
+const SEARCH_FIELD_WEIGHT = { name: 3, title: 2, keywords: 2, description: 1 } as const
 export type SearchField = keyof typeof SEARCH_FIELD_WEIGHT
 
 /** A token counts once, at its highest-weight field, so a name hit does not
  *  also score for a description mention. */
-const ORDERED_FIELDS: readonly SearchField[] = ['name', 'title', 'description']
+const ORDERED_FIELDS: readonly SearchField[] = ['name', 'title', 'keywords', 'description']
 
 export interface RankedToolMatch {
     name: string
@@ -33,7 +35,13 @@ export function isRegexPattern(pattern: string): boolean {
  *  is not a valid regex, so callers surface their own error message. */
 export function searchToolsRegex<T extends SearchableTool>(tools: readonly T[], pattern: string): T[] {
     const regex = new RegExp(pattern, 'i')
-    return tools.filter((t) => regex.test(t.name) || regex.test(t.title) || regex.test(t.description))
+    return tools.filter(
+        (t) =>
+            regex.test(t.name) ||
+            regex.test(t.title) ||
+            regex.test(t.description) ||
+            (t.searchKeywords ?? []).some((keyword) => regex.test(keyword))
+    )
 }
 
 /** Multi-word queries like "create dashboard insight" match nothing as a single
@@ -48,6 +56,7 @@ export function searchToolsRanked<T extends SearchableTool>(tools: readonly T[],
         const haystack: Record<SearchField, string> = {
             name: t.name.toLowerCase(),
             title: t.title.toLowerCase(),
+            keywords: (t.searchKeywords ?? []).join(' ').toLowerCase(),
             description: t.description.toLowerCase(),
         }
         let tokensMatched = 0
