@@ -6,7 +6,7 @@ from posthog.migration_helpers import SafeAddIndexConcurrently
 class Migration(migrations.Migration):
     atomic = False
 
-    dependencies = [("signals", "0209_monitoring_report_outcomes")]
+    dependencies = [("signals", "0211_monitoring_tracker_completion")]
 
     operations = [
         SafeAddIndexConcurrently(
