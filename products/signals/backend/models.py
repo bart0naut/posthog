@@ -1217,6 +1217,7 @@ class SignalReportTrackerIssue(TeamScopedRootMixin, UUIDModel):
     pr_linked_at = models.DateTimeField(null=True, blank=True)
     # When we closed the issue in the provider, after the report was dismissed.
     closed_at = models.DateTimeField(null=True, blank=True)
+    close_comment_posted_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -2645,6 +2646,8 @@ class SignalReportMonitoringAttempt(UUIDModel):
     research_requested_at = models.DateTimeField(null=True, blank=True)
     tracker_issue_close_requested_at = models.DateTimeField(null=True, blank=True)
     tracker_issue_close_processed_at = models.DateTimeField(null=True, blank=True)
+    tracker_issue_close_next_attempt_at = models.DateTimeField(null=True, blank=True)
+    close_pr_on_resolve = models.BooleanField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -2653,7 +2656,9 @@ class SignalReportMonitoringAttempt(UUIDModel):
         ]
         indexes = [
             models.Index(
-                fields=["tracker_issue_close_requested_at", "id"],
+                models.F("tracker_issue_close_next_attempt_at").asc(nulls_first=True),
+                models.F("tracker_issue_close_requested_at"),
+                models.F("id"),
                 condition=models.Q(
                     tracker_issue_close_requested_at__isnull=False, tracker_issue_close_processed_at__isnull=True
                 ),

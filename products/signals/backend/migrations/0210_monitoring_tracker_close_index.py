@@ -12,7 +12,9 @@ class Migration(migrations.Migration):
         SafeAddIndexConcurrently(
             model_name="signalreportmonitoringattempt",
             index=models.Index(
-                fields=["tracker_issue_close_requested_at", "id"],
+                models.F("tracker_issue_close_next_attempt_at").asc(nulls_first=True),
+                models.F("tracker_issue_close_requested_at"),
+                models.F("id"),
                 condition=models.Q(
                     tracker_issue_close_requested_at__isnull=False, tracker_issue_close_processed_at__isnull=True
                 ),

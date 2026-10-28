@@ -34,49 +34,77 @@ const linkedTask = (purpose: ReportTaskPurpose, status: TaskRunStatus | null, pr
     }) as unknown as ReportTaskEntry
 
 describe('inboxReportDetailLogic', () => {
-    it('orders report runs newest first across purposes using their first association', async () => {
-        const runs = [
-            { taskId: 'implementation-old', type: 'implementation', startedAt: '2026-01-01T01:00:00Z' },
-            { taskId: 'research', type: 'research', startedAt: '2026-01-01T02:00:00Z' },
-            { taskId: 'implementation-new', type: 'implementation', startedAt: '2026-01-01T03:00:00Z' },
-            { taskId: 'scout', type: 'scout', startedAt: '2026-01-01T04:00:00Z' },
-            { taskId: 'implementation-old', type: 'implementation', startedAt: '2026-01-01T05:00:00Z' },
-        ]
-        useMocks({
-            get: {
-                '/api/projects/:team_id/signals/reports/:id/feedback_state/': { sentiment: null, note: '' },
-                '/api/projects/:team_id/signals/reports/:id/artefacts/': {
-                    results: runs.map(({ taskId, type, startedAt }, index) => ({
-                        id: `task-run-${index}`,
-                        type: 'task_run',
-                        content: { task_id: taskId, product: 'signals', type },
-                        created_at: startedAt,
-                    })),
+    it.each([SignalReportStatus.READY, SignalReportStatus.MONITORING])(
+        'orders report runs and refreshes settled tasks appropriately in %s',
+        async (status) => {
+            let latestRunId: string | null = null
+            const taskRequests: string[] = []
+            const runs = [
+                { taskId: 'implementation-old', type: 'implementation', startedAt: '2026-01-01T01:00:00Z' },
+                { taskId: 'research', type: 'research', startedAt: '2026-01-01T02:00:00Z' },
+                { taskId: 'implementation-new', type: 'implementation', startedAt: '2026-01-01T03:00:00Z' },
+                { taskId: 'scout', type: 'scout', startedAt: '2026-01-01T04:00:00Z' },
+                { taskId: 'implementation-old', type: 'implementation', startedAt: '2026-01-01T05:00:00Z' },
+            ]
+            useMocks({
+                get: {
+                    '/api/projects/:team_id/signals/reports/:id/feedback_state/': { sentiment: null, note: '' },
+                    '/api/projects/:team_id/signals/reports/:id/artefacts/': () => ({
+                        results: runs.map(({ taskId, type, startedAt }, index) => ({
+                            id: `task-run-${index}`,
+                            type: 'task_run',
+                            content: {
+                                task_id: taskId,
+                                product: 'signals',
+                                type,
+                                run_id: taskId === runs[0].taskId ? latestRunId : null,
+                            },
+                            created_at: startedAt,
+                        })),
+                    }),
+                    '/api/projects/:team_id/signals/reports/:id/signals/': { signals: [] },
+                    '/api/projects/:team_id/signals/reports/:id/checks/': { results: [] },
+                    '/api/projects/:team_id/signals/reports/available_reviewers/': [],
+                    '/api/projects/:team_id/tasks/:id/': (req) => {
+                        taskRequests.push(String(req.params.id))
+                        return [
+                            200,
+                            {
+                                id: req.params.id,
+                                latest_run: {
+                                    id: req.params.id === runs[0].taskId ? (latestRunId ?? 'old-run') : 'old-run',
+                                    status: TaskRunStatus.COMPLETED,
+                                },
+                            },
+                        ]
+                    },
                 },
-                '/api/projects/:team_id/signals/reports/:id/signals/': { signals: [] },
-                '/api/projects/:team_id/signals/reports/:id/checks/': { results: [] },
-                '/api/projects/:team_id/signals/reports/available_reviewers/': [],
-                '/api/projects/:team_id/tasks/:id/': (req) => [
-                    200,
-                    { id: req.params.id, latest_run: { status: TaskRunStatus.COMPLETED } },
-                ],
-            },
-        })
-        initKeaTests()
-        const logic = inboxReportDetailLogic({ reportId: REPORT.id, report: REPORT })
-        logic.mount()
-        try {
-            await expectLogic(logic).toFinishAllListeners()
-            expect(logic.values.reportTasks?.map((entry) => entry.task.id)).toEqual([
-                'scout',
-                'implementation-new',
-                'research',
-                'implementation-old',
-            ])
-        } finally {
-            logic.unmount()
+            })
+            initKeaTests()
+            const logic = inboxReportDetailLogic({ reportId: REPORT.id, report: { ...REPORT, status } })
+            logic.mount()
+            try {
+                await expectLogic(logic).toFinishAllListeners()
+                expect(logic.values.reportTasks?.map((entry) => entry.task.id)).toEqual([
+                    'scout',
+                    'implementation-new',
+                    'research',
+                    'implementation-old',
+                ])
+                expect(taskRequests).toHaveLength(4)
+                logic.actions.loadReportArtefacts()
+                await expectLogic(logic).toFinishAllListeners()
+                expect(taskRequests).toHaveLength(status === SignalReportStatus.MONITORING ? 4 : 8)
+                const beforeNewRun = taskRequests.length
+                latestRunId = 'replacement-run'
+                logic.actions.loadReportArtefacts()
+                await expectLogic(logic).toFinishAllListeners()
+                expect(taskRequests).toHaveLength(beforeNewRun + (status === SignalReportStatus.MONITORING ? 1 : 4))
+            } finally {
+                logic.unmount()
+            }
         }
-    })
+    )
 
     describe('report editing', () => {
         let logic: ReturnType<typeof inboxReportDetailLogic.build>

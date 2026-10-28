@@ -22,6 +22,7 @@ from products.signals.backend.models import (
     SignalReport,
     SignalReportArtefact,
     SignalReportCheck,
+    SignalReportMonitoringAttempt,
     SignalReportMonitoringResult,
     SignalReportTrackerIssue,
 )
@@ -265,12 +266,37 @@ class TestReportMonitoringAggregation(BaseTest):
             assert self.attempt.tracker_issue_close_processed_at is None
         initial_calls = self.close_tracker.call_count
         self.close_tracker.return_value = True
-        complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
+        retry_at = self.now + timedelta(minutes=5) if cause == "provider_failure" else self.now
+        with time_machine.travel(retry_at, tick=False):
+            complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
         self.attempt.refresh_from_db()
-        assert self.attempt.tracker_issue_close_processed_at == self.now
+        assert self.attempt.tracker_issue_close_processed_at == retry_at
         assert self.close_tracker.call_count == initial_calls + 1
         complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
         assert self.close_tracker.call_count == initial_calls + 1
+
+    def test_failed_tracker_batch_does_not_starve_new_requests(self) -> None:
+        self.close_tracker.return_value = False
+        SignalReportTrackerIssue.objects.for_team(self.team.id).create(
+            team_id=self.team.id,
+            report=self.report,
+            status=SignalReportTrackerIssue.Status.CREATED,
+        )
+        attempts = [
+            SignalReportMonitoringAttempt(
+                team_id=self.team.id,
+                report=self.report,
+                monitoring_started_at=self.now - timedelta(days=200 - index),
+                tracker_issue_close_requested_at=self.now - timedelta(hours=1) + timedelta(seconds=index),
+            )
+            for index in range(101)
+        ]
+        SignalReportMonitoringAttempt.objects.for_team(self.team.id).bulk_create(attempts)
+        complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
+        assert self.close_tracker.call_count == 100
+        complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
+        assert self.close_tracker.call_count == 101
+        assert self.close_tracker.call_args.kwargs["monitoring_attempt_id"] == str(attempts[-1].id)
 
     @parameterized.expand(
         [
