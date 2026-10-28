@@ -56,7 +56,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="signalreportmonitoringattempt",
-            name="tracker_issue_close_dispatched_at",
+            name="tracker_issue_close_processed_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AlterField(

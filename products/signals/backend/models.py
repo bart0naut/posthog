@@ -2645,12 +2645,21 @@ class SignalReportMonitoringAttempt(UUIDModel):
     assessment_requested_at = models.DateTimeField(null=True, blank=True)
     research_requested_at = models.DateTimeField(null=True, blank=True)
     tracker_issue_close_requested_at = models.DateTimeField(null=True, blank=True)
-    tracker_issue_close_dispatched_at = models.DateTimeField(null=True, blank=True)
+    tracker_issue_close_processed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["report", "monitoring_started_at"], name="signals_attempt_period_uniq")
+        ]
+        indexes = [
+            models.Index(
+                fields=["tracker_issue_close_requested_at", "id"],
+                condition=models.Q(
+                    tracker_issue_close_requested_at__isnull=False, tracker_issue_close_processed_at__isnull=True
+                ),
+                name="signals_pending_tracker_close",
+            ),
         ]
 
 

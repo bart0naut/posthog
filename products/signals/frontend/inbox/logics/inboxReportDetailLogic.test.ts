@@ -1061,7 +1061,13 @@ describe('inboxReportDetailLogic', () => {
                     ],
                 })
                 let requests = 0
-                let reportStatus = REPORT.status
+                let reportStatus = SignalReportStatus.MONITORING
+                const monitoringReport = { ...REPORT, status: reportStatus }
+                const reloadReport = jest.fn()
+                const sceneSpy = jest.spyOn(inboxSceneLogic, 'findMounted').mockReturnValue({
+                    values: { selectedReportId: REPORT.id, selectedReportLoading: false },
+                    actions: { loadSelectedReport: reloadReport },
+                } as unknown as ReturnType<typeof inboxSceneLogic.build>)
                 const check = {
                     id: 'monitoring-check',
                     status: 'active',
@@ -1106,21 +1112,27 @@ describe('inboxReportDetailLogic', () => {
                     },
                 })
                 try {
-                    logic = inboxReportDetailLogic({ reportId: REPORT.id, report: REPORT })
+                    logic = inboxReportDetailLogic({ reportId: REPORT.id, report: monitoringReport })
                     logic.mount()
                     await expectLogic(logic).toFinishAllListeners()
+                    const reloadArtefacts = jest.spyOn(logic.actions, 'loadReportArtefacts')
                     expect(requests).toBe(1)
                     jest.advanceTimersByTime(60000)
                     await expectLogic(logic).toFinishAllListeners()
                     expect(requests).toBe(2)
+                    expect(reloadReport).toHaveBeenCalledWith({ id: REPORT.id })
+                    expect(reloadArtefacts).toHaveBeenCalled()
                     expect(logic.values.reportChecks?.[0].monitoring_timing?.state).toBe('window_ended')
-                    inboxReportDetailLogic({ reportId: REPORT.id, report: { ...REPORT } })
+                    inboxReportDetailLogic({ reportId: REPORT.id, report: { ...monitoringReport } })
                     await expectLogic(logic).toFinishAllListeners()
                     expect(requests).toBe(2)
+                    reloadArtefacts.mockClear()
+                    reloadReport.mockClear()
                     reportStatus = status
                     inboxReportDetailLogic({ reportId: REPORT.id, report: { ...REPORT, status } })
                     await expectLogic(logic).toFinishAllListeners()
                     expect(requests).toBe(3)
+                    expect(reloadArtefacts).toHaveBeenCalledTimes(1)
                     expect(logic.values.reportChecks?.[0].monitoring_timing?.state).toBe(
                         status === SignalReportStatus.SUPPRESSED ? 'archived' : undefined
                     )
@@ -1128,8 +1140,11 @@ describe('inboxReportDetailLogic', () => {
                     jest.advanceTimersByTime(60000)
                     await expectLogic(logic).toFinishAllListeners()
                     expect(requests).toBe(3)
+                    expect(reloadReport).not.toHaveBeenCalled()
+                    expect(reloadArtefacts).toHaveBeenCalledTimes(1)
                 } finally {
                     logic.unmount()
+                    sceneSpy.mockRestore()
                     jest.useRealTimers()
                 }
             }

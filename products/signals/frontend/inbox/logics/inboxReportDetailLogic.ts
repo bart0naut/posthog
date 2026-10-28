@@ -2088,6 +2088,9 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
             actions.setReport(props.report ?? null)
             if (props.report?.status !== oldProps.report?.status) {
                 actions.loadReportChecks()
+                if (oldProps.report?.status === SignalReportStatus.MONITORING) {
+                    actions.loadReportArtefacts()
+                }
             }
         }
     }),
@@ -2103,6 +2106,15 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
         actions.setReport(props.report ?? null)
         cache.disposables.add(() => {
             const interval = setInterval(() => {
+                if (values.report?.status === SignalReportStatus.MONITORING) {
+                    if (!values.reportArtefactsLoading) {
+                        actions.loadReportArtefacts()
+                    }
+                    const scene = inboxSceneLogic.findMounted()
+                    if (scene?.values.selectedReportId === props.reportId && !scene.values.selectedReportLoading) {
+                        scene.actions.loadSelectedReport({ id: props.reportId })
+                    }
+                }
                 if (
                     values.report?.status !== SignalReportStatus.RESOLVED &&
                     values.report?.status !== SignalReportStatus.CLOSED &&

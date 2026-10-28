@@ -23,6 +23,7 @@ from products.signals.backend.models import (
     SignalReportArtefact,
     SignalReportCheck,
     SignalReportMonitoringResult,
+    SignalReportTrackerIssue,
 )
 from products.signals.backend.report_monitoring_aggregation import (
     MonitoringAggregation,
@@ -35,6 +36,7 @@ from products.signals.backend.report_monitoring_outcomes import (
     aggregate_monitoring_attempt,
 )
 from products.signals.backend.report_monitoring_results import MonitoringEvaluation, save_monitoring_result
+from products.signals.backend.tracker_issues import complete_monitoring_tracker_issues
 
 
 class TestMonitoringAggregation(SimpleTestCase):
@@ -64,7 +66,9 @@ class TestReportMonitoringAggregation(BaseTest):
         self.flag = self.enterContext(
             patch("products.signals.backend.report_content_gates.feature_enabled_or_false", return_value=True)
         )
-        self.close_tracker = self.enterContext(patch("products.signals.backend.tasks.close_report_tracker_issue.delay"))
+        self.close_tracker = self.enterContext(
+            patch("products.signals.backend.tracker_issues.close_tracker_issue_for_report", return_value=True)
+        )
         self.report = SignalReport.objects.create(
             team=self.team, status=SignalReport.Status.READY, title="Checkout recovery"
         )
@@ -149,8 +153,13 @@ class TestReportMonitoringAggregation(BaseTest):
         assert SignalReportCheck.objects.for_team(self.team.id).filter(runs_remaining=3).count() == 4
         historical.refresh_from_db()
         assert historical.status == SignalReportCheck.Status.EXPIRED
+        self.close_tracker.assert_not_called()
+        complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
         self.close_tracker.assert_called_once_with(
-            report_id=str(self.report.id), team_id=self.team.id, completed=True, actor_user_id=None
+            report_id=str(self.report.id),
+            team_id=self.team.id,
+            completed=True,
+            monitoring_attempt_id=str(self.attempt.id),
         )
 
     def test_failure_closes_immediately_and_records_research_intent_atomically(self) -> None:
@@ -228,10 +237,16 @@ class TestReportMonitoringAggregation(BaseTest):
         assert self.attempt.assessment_requested_at == self.now
         assert self.attempt.research_requested_at == self.now
 
-    @parameterized.expand([("broker_failure",), ("lost_callback",)])
-    def test_tracker_dispatch_recovers_after_report_resolution(self, cause: str) -> None:
-        self.close_tracker.side_effect = RuntimeError("Broker unavailable")
-        with self.captureOnCommitCallbacks(execute=cause == "broker_failure"):
+    @parameterized.expand([("provider_failure",), ("missed_sweep",)])
+    def test_tracker_completion_recovers_after_report_resolution(self, cause: str) -> None:
+        self.close_tracker.return_value = False
+        SignalReportTrackerIssue.objects.for_team(self.team.id).create(
+            team_id=self.team.id,
+            report=self.report,
+            provider="github",
+            status=SignalReportTrackerIssue.Status.CREATED,
+        )
+        with self.captureOnCommitCallbacks(execute=True):
             save_monitoring_result(self._evaluation(0))
             save_monitoring_result(self._evaluation(1))
             self._aggregate()
@@ -240,15 +255,21 @@ class TestReportMonitoringAggregation(BaseTest):
         self.report.refresh_from_db()
         assert self.report.status == SignalReport.Status.RESOLVED
         assert self.attempt.tracker_issue_close_requested_at == self.now
-        assert self.attempt.tracker_issue_close_dispatched_at is None
-        initial_calls = 1 if cause == "broker_failure" else 0
-        assert self.close_tracker.call_count == initial_calls
-        self.close_tracker.side_effect = None
+        assert self.attempt.tracker_issue_close_processed_at is None
+        self.close_tracker.assert_not_called()
         aggregate_due_monitoring_attempts(deadline=time.monotonic() + 30, limit=10)
+        self.close_tracker.assert_not_called()
+        if cause == "provider_failure":
+            complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
+            self.attempt.refresh_from_db()
+            assert self.attempt.tracker_issue_close_processed_at is None
+        initial_calls = self.close_tracker.call_count
+        self.close_tracker.return_value = True
+        complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
         self.attempt.refresh_from_db()
-        assert self.attempt.tracker_issue_close_dispatched_at == self.now
+        assert self.attempt.tracker_issue_close_processed_at == self.now
         assert self.close_tracker.call_count == initial_calls + 1
-        aggregate_due_monitoring_attempts(deadline=time.monotonic() + 30, limit=10)
+        complete_monitoring_tracker_issues(deadline=time.monotonic() + 30)
         assert self.close_tracker.call_count == initial_calls + 1
 
     @parameterized.expand(

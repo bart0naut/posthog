@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
-from functools import partial
 from uuid import UUID
 
 from django.db import transaction
@@ -74,33 +73,6 @@ def _member_state(results: list[SignalReportMonitoringResult]) -> MonitoringMemb
     if sum(result.evidence_status == "errored" for result in results) >= MAX_CONSECUTIVE_CHECK_ERRORS:
         return MonitoringMemberState.EXHAUSTED
     return MonitoringMemberState.WAITING
-
-
-def _dispatch_tracker_issue_close(*, team_id: int, attempt_id: UUID) -> None:
-    attempt = (
-        SignalReportMonitoringAttempt.objects.for_team(team_id)
-        .filter(
-            id=attempt_id,
-            tracker_issue_close_requested_at__isnull=False,
-            tracker_issue_close_dispatched_at__isnull=True,
-        )
-        .first()
-    )
-    if attempt is None:
-        return
-    # The tasks module imports contracts that must stay off Django's startup path.
-    from products.signals.backend.tasks import close_report_tracker_issue  # noqa: PLC0415
-
-    try:
-        close_report_tracker_issue.delay(
-            report_id=str(attempt.report_id), team_id=team_id, completed=True, actor_user_id=None
-        )
-    except Exception:
-        logger.exception("signals.monitoring.tracker_issue_dispatch_failed", attempt_id=str(attempt.id))
-        return
-    SignalReportMonitoringAttempt.objects.for_team(team_id).filter(
-        id=attempt_id, tracker_issue_close_dispatched_at__isnull=True
-    ).update(tracker_issue_close_dispatched_at=timezone.now())
 
 
 def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: UUID) -> MonitoringAggregation:
@@ -200,14 +172,6 @@ def aggregate_monitoring_attempt(*, team_id: int, report_id: UUID, attempt_id: U
                 SignalReport.Status.RESOLVED if decision == MonitoringAggregation.PASSED else SignalReport.Status.CLOSED
             )
             report.save(update_fields=report.transition_to(target))
-            if decision == MonitoringAggregation.PASSED:
-                transaction.on_commit(
-                    partial(
-                        _dispatch_tracker_issue_close,
-                        team_id=team_id,
-                        attempt_id=attempt.id,
-                    )
-                )
         if decision != MonitoringAggregation.WAITING and decision != previous:
             SignalReportArtefact.add_log(
                 team_id=team_id,
@@ -228,15 +192,6 @@ def aggregate_monitoring_attempt_safely(*, team_id: int, report_id: UUID, attemp
 def aggregate_due_monitoring_attempts(*, deadline: float, limit: int) -> None:
     if limit <= 0 or time.monotonic() >= deadline:
         return
-    pending_dispatches = (
-        SignalReportMonitoringAttempt.objects.unscoped()
-        .filter(tracker_issue_close_requested_at__isnull=False, tracker_issue_close_dispatched_at__isnull=True)
-        .order_by("tracker_issue_close_requested_at", "id")[:limit]
-    )
-    for pending in pending_dispatches:
-        if time.monotonic() >= deadline:
-            return
-        _dispatch_tracker_issue_close(team_id=pending.team_id, attempt_id=pending.id)
     result_count = (
         SignalReportMonitoringResult.objects.unscoped()
         .filter(team_id=OuterRef("team_id"), report_id=OuterRef("report_id"), attempt_id=OuterRef("id"))

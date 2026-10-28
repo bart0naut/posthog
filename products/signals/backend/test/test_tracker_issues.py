@@ -19,7 +19,12 @@ from posthog.models.integration import (
     LinearIntegration,
 )
 
-from products.signals.backend.models import SignalReport, SignalReportTrackerIssue, SignalTeamConfig
+from products.signals.backend.models import (
+    SignalReport,
+    SignalReportMonitoringAttempt,
+    SignalReportTrackerIssue,
+    SignalTeamConfig,
+)
 from products.signals.backend.serializers import SignalTeamConfigSerializer
 from products.signals.backend.tasks import close_report_tracker_issue
 from products.signals.backend.tracker_issues import (
@@ -264,9 +269,21 @@ def test_link_pull_request_backs_off_when_the_body_changes_during_the_edit(team)
 
 
 @pytest.mark.django_db
-def test_close_tracker_issue_is_recorded_once(team):
+@pytest.mark.parametrize("delivery", ["sequential", "overlapping", "monitoring", "reopened", "replaced_attempt"])
+def test_close_tracker_issue_is_recorded_once(team, delivery):
     integration = _connect_tracker(team, "github")
     report = _make_report(team)
+    attempt_id = None
+    if delivery in {"monitoring", "reopened", "replaced_attempt"}:
+        started_at = timezone.now() - timedelta(hours=1)
+        attempt = SignalReportMonitoringAttempt.objects.for_team(team.id).create(
+            team=team, report=report, monitoring_started_at=started_at, aggregation_state="passed"
+        )
+        attempt_id = str(attempt.id)
+        SignalReport.objects.filter(id=report.id).update(
+            status=SignalReport.Status.READY if delivery == "reopened" else SignalReport.Status.RESOLVED,
+            monitoring_started_at=timezone.now() if delivery == "replaced_attempt" else started_at,
+        )
     SignalReportTrackerIssue.all_teams.create(
         team=team,
         report=report,
@@ -276,11 +293,31 @@ def test_close_tracker_issue_is_recorded_once(team):
         external_context={"repository": "web", "number": 12},
     )
 
-    with patch.object(GitHubIntegration, "close_issue") as close_issue:
-        assert close_tracker_issue_for_report(team_id=team.id, report_id=str(report.id)) is True
+    def overlapping_close(*args: object, **kwargs: object) -> None:
         assert close_tracker_issue_for_report(team_id=team.id, report_id=str(report.id)) is False
 
-    close_issue.assert_called_once_with("web", 12, completed=False)
+    with (
+        patch.object(GitHubIntegration, "close_issue") as close_issue,
+        patch.object(GitHubIntegration, "comment_on_issue") as comment,
+    ):
+        if delivery == "overlapping":
+            close_issue.side_effect = overlapping_close
+        assert (
+            close_tracker_issue_for_report(
+                team_id=team.id,
+                report_id=str(report.id),
+                monitoring_attempt_id=attempt_id,
+                completed=attempt_id is not None,
+            )
+            is True
+        )
+        if delivery in {"reopened", "replaced_attempt"}:
+            close_issue.assert_not_called()
+            comment.assert_not_called()
+        else:
+            assert close_tracker_issue_for_report(team_id=team.id, report_id=str(report.id)) is False
+            close_issue.assert_called_once_with("web", 12, completed=attempt_id is not None)
+            comment.assert_called_once()
 
 
 @pytest.mark.django_db
