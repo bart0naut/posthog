@@ -383,7 +383,20 @@ export const ExperimentDisabledEntry: Story = {
 }
 
 export const TreatmentReminder: Story = {
+    name: 'Paused reminder without Wizard',
+    parameters: {
+        featureFlags: { ...meta.parameters?.featureFlags, [FEATURE_FLAGS.INBOX_UI_ONBOARDING]: false },
+    },
     render: () => <InboxOnboardingBanner />,
+    play: async ({ canvas }) => {
+        await expect(canvas.findByText('Set up Self-Driving')).resolves.toBeVisible()
+        await expect(canvas.queryByLabelText('Copy self-driving setup command')).not.toBeInTheDocument()
+    },
+    decorators: [
+        mswDecorator({
+            get: { '/api/projects/:id/signals/onboarding/': { draft: null, completed_at: null, variant: 'control' } },
+        }),
+    ],
 }
 
 let quickActivationCompleted = false
