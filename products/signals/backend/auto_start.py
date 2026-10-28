@@ -753,6 +753,7 @@ def _create_implementation_task_if_absent(
     *,
     team_id: int,
     report_id: str,
+    implementation_spend_kind: str = "reviewer_triggered_implementation",
     title: str,
     description: str,
     expected_content: ImplementationReportContent,
@@ -910,6 +911,7 @@ def _create_implementation_task_if_absent(
             repository=repository,
             branch=base_branch,
             signal_report_id=report_id,
+            implementation_spend_kind=implementation_spend_kind,
             # Resolved by the caller outside this lock, like `agent_runtime` above, so the
             # create-time free-trial gate makes no flag request while the report row is locked.
             free_trial_enabled=free_trial_enabled,
@@ -1355,6 +1357,7 @@ async def maybe_autostart_implementation_task(
     *,
     team_id: int,
     report_id: str,
+    implementation_spend_kind: str = "reviewer_triggered_implementation",
     repository: str,
     title: str,
     summary: str,
@@ -1464,6 +1467,7 @@ async def maybe_autostart_implementation_task(
                 team_id=team_id,
                 report_id=report_id,
                 remaining_retries=remaining_retries - 1,
+                implementation_spend_kind=implementation_spend_kind,
                 dispatch=dispatch,
                 ch_user=ch_user,
             )
@@ -1645,6 +1649,7 @@ async def maybe_autostart_implementation_task(
         created = await database_sync_to_async(_create_implementation_task_if_absent, thread_sensitive=False)(
             team_id=team_id,
             report_id=report_id,
+            implementation_spend_kind=implementation_spend_kind,
             title=title,
             expected_content=expected_content,
             expected_reviewers=assignment.state,
@@ -1679,6 +1684,7 @@ async def maybe_autostart_implementation_task(
                 team_id=team_id,
                 report_id=report_id,
                 remaining_retries=remaining_retries - 1,
+                implementation_spend_kind=implementation_spend_kind,
                 dispatch=dispatch,
                 ch_user=ch_user,
             )
@@ -1742,6 +1748,7 @@ async def maybe_autostart_from_report_artefacts(
     *,
     team_id: int,
     report_id: str,
+    implementation_spend_kind: str = "reviewer_triggered_implementation",
     remaining_retries: int = 2,
     dispatch: ImplementationDispatch | None = None,
     ch_user: ClickHouseUser = ClickHouseUser.DEFAULT,
@@ -1834,6 +1841,7 @@ async def maybe_autostart_from_report_artefacts(
     return await maybe_autostart_implementation_task(
         team_id=team_id,
         report_id=report_id,
+        implementation_spend_kind=implementation_spend_kind,
         repository=repository,
         title=report.title,
         summary=report.summary,
