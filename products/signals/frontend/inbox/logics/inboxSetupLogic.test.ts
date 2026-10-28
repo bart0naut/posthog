@@ -42,6 +42,7 @@ describe('focused Inbox setup', () => {
     let sources: SignalSourceConfigApi[]
     let failCompletion: boolean
     let createdSources: number
+    let inventoryRequests: number
     let canonicalScouts: SignalScoutConfigApi[]
     let enabledScouts: string[]
     let hasErrorTrackingData: boolean
@@ -55,6 +56,7 @@ describe('focused Inbox setup', () => {
         variant = 'test-ui'
         sources = []
         createdSources = 0
+        inventoryRequests = 0
         canonicalScouts = []
         enabledScouts = []
         hasErrorTrackingData = false
@@ -72,22 +74,32 @@ describe('focused Inbox setup', () => {
                     completed_at: completedAt,
                     variant,
                 }),
-                '/api/projects/:id/signals/source_configs/': () => ({
-                    results: sources,
-                    next: null,
-                    count: sources.length,
-                }),
-                '/api/projects/:id/event_definitions/': () => ({
-                    results: hasErrorTrackingData ? [{ name: '$exception', last_seen_at: '2026-10-15T00:00:00Z' }] : [],
-                    next: null,
-                    count: hasErrorTrackingData ? 1 : 0,
-                }),
-                '/api/projects/:id/error_tracking/issues/exists/': () => ({ exists: hasErrorTrackingData }),
-                '/api/projects/:id/vision/scanners/': () => ({
-                    results: scanners.filter((scanner) => scanner.enabled),
-                    next: null,
-                    count: scanners.length,
-                }),
+                '/api/projects/:id/signals/source_configs/': () => {
+                    inventoryRequests++
+                    return { results: sources, next: null, count: sources.length }
+                },
+                '/api/projects/:id/event_definitions/': () => {
+                    inventoryRequests++
+                    return {
+                        results: hasErrorTrackingData
+                            ? [{ name: '$exception', last_seen_at: '2026-10-15T00:00:00Z' }]
+                            : [],
+                        next: null,
+                        count: hasErrorTrackingData ? 1 : 0,
+                    }
+                },
+                '/api/projects/:id/error_tracking/issues/exists/': () => {
+                    inventoryRequests++
+                    return { exists: hasErrorTrackingData }
+                },
+                '/api/projects/:id/vision/scanners/': () => {
+                    inventoryRequests++
+                    return {
+                        results: scanners.filter((scanner) => scanner.enabled),
+                        next: null,
+                        count: scanners.length,
+                    }
+                },
                 '/api/projects/:id/signals/scout/configs/': () => canonicalScouts,
                 '/api/projects/:id/signals/scout/suggestions/': mockScoutSuggestionSet({
                     status: 'low_activity',
@@ -115,6 +127,7 @@ describe('focused Inbox setup', () => {
                     return [200, { draft: savedDraft, completed_at: null, variant }]
                 },
                 '/api/projects/:id/signals/scout/configs/sync/': ({ request }) => {
+                    inventoryRequests++
                     expect(new URL(request.url).searchParams.get('surface')).toBe('onboarding')
                     return [200, canonicalScouts]
                 },
@@ -204,22 +217,25 @@ describe('focused Inbox setup', () => {
                 },
             ]
             const refresh = jest.spyOn(signalsApi, 'signalsScoutSuggestionsRefresh')
-            logic.actions.startSetup()
-            await waitFor(() => expect(logic.values.quickSetupReady).toBe(true))
+            await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
+            expect(inventoryRequests).toBe(0)
             expect(logic.values.isQuickSetup).toBe(savedImplementation === null)
             if (savedImplementation !== null) {
                 expect(logic.values.savedState?.draft?.automatic_implementation).toBe(savedImplementation)
             }
             if (entry === 'github_return') {
                 router.actions.replace(router.values.location.pathname, { onboarding_step: 'quick' })
-                expect(logic.values.shouldResumeQuickSetup).toBe(true)
+                await waitFor(() => expect(logic.values.shouldResumeQuickSetup).toBe(true))
                 logic.actions.resumeQuickSetup()
                 logic.actions.resumeQuickSetup()
             } else {
                 logic.actions.activateQuickSetup()
                 logic.actions.activateQuickSetup()
             }
+            expect(logic.values.quickActivationPending).toBe(true)
             await waitFor(() => expect(logic.values.completed).toBe(true))
+            expect(inventoryRequests).toBeGreaterThan(0)
+            expect(logic.values.quickActivationPending).toBe(false)
             expect(enabledScouts).toEqual(['signals-scout-general'])
             expect(logic.values.savedState?.draft?.automatic_implementation).toBe(!usageBasedPricing)
             expect(logic.values.savedState?.draft?.suggestions.map((item) => item.skill_name)).toEqual([
@@ -255,6 +271,56 @@ describe('focused Inbox setup', () => {
             ).toHaveLength(1)
         }
     )
+
+    it.each([
+        ['a missing general scout', 'scouts'],
+        ['an unavailable source inventory', 'sources'],
+    ] as const)('reports %s after a quick activation click and activates on retry', async (_name, failure) => {
+        const capture = jest.spyOn(posthog, 'capture')
+        savedDraft = null
+        failCompletion = false
+        hasEvents = true
+        const generalScout = {
+            ...mockScoutConfigs[0],
+            skill_name: 'signals-scout-general',
+            enabled: false,
+            scout_origin: 'canonical' as const,
+        }
+        canonicalScouts = failure === 'scouts' ? [] : [generalScout]
+        let sourcesUnavailable = failure === 'sources'
+        useMocks({
+            get: {
+                '/api/projects/:id/signals/source_configs/': () =>
+                    sourcesUnavailable
+                        ? [503, { detail: 'Unavailable' }]
+                        : { results: sources, next: null, count: sources.length },
+            },
+        })
+        await expectLogic(logic, () => logic.actions.loadSetup()).toFinishAllListeners()
+        expect(inventoryRequests).toBe(0)
+        logic.actions.activateQuickSetup()
+        expect(logic.values.quickActivationPending).toBe(true)
+        await waitFor(() => expect(logic.values.error).toBeTruthy())
+        expect(logic.values.failedOperation).toBe(failure)
+        expect(logic.values.quickActivationPending).toBe(false)
+        expect(logic.values.completed).toBe(false)
+        if (failure === 'scouts') {
+            canonicalScouts.push(generalScout)
+        } else {
+            sourcesUnavailable = false
+        }
+        logic.actions.retry()
+        await waitFor(() => expect(logic.values.completed).toBe(true))
+        expect(logic.values.error).toBeNull()
+        expect(
+            capture.mock.calls.filter(([event]) => event === 'self-driving onboarding activation requested')
+        ).toEqual([
+            [
+                'self-driving onboarding activation requested',
+                expect.objectContaining({ activation_source: 'retry', setup_mode: 'quick' }),
+            ],
+        ])
+    })
 
     it.each(['control', null, 'test-ui', 'test-github'] as const)(
         'opens setup and preserves the %s assignment through resume and activation',

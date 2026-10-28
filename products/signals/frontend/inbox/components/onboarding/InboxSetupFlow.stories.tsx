@@ -1,6 +1,7 @@
 import { MOCK_DEFAULT_TEAM } from 'lib/api.mock'
 
 import type { Meta, StoryObj } from '@storybook/react'
+import { waitFor } from '@testing-library/dom'
 import { useValues } from 'kea'
 
 import { FEATURE_FLAGS, TeamMembershipLevel } from 'lib/constants'
@@ -440,7 +441,9 @@ export const QuickConnected: Story = {
     ...QuickEntry,
     name: 'Quick setup with GitHub connected',
     play: async ({ canvas }) => {
-        await canvas.findByText('Activate Self-Driving')
+        // Nothing is prefetched for the welcome screen, so the button is enabled as soon as the project loads.
+        const activate = (await canvas.findByText('Activate Self-Driving')).closest('button')
+        await waitFor(() => expect(activate).toHaveAttribute('aria-disabled', 'false'))
         await expect(canvas.getByText('Start manually')).toBeVisible()
     },
     decorators: [

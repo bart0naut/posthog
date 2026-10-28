@@ -16,7 +16,7 @@ import { useScoutCreateDisabledReason } from '../config/scouts/ScoutCreateModalH
 
 export function InboxQuickSetupAction(): JSX.Element {
     const { startSetup, connectGithub, activateQuickSetup, resumeQuickSetup, retry } = useActions(inboxSetupLogic)
-    const { hasGithubIntegration, quickSetupReady, saving, error, shouldResumeQuickSetup, failedOperation } =
+    const { hasGithubIntegration, quickActivationPending, saving, error, shouldResumeQuickSetup, failedOperation } =
         useValues(inboxSetupLogic)
     const { integrations, integrationsLoading } = useValues(integrationsLogic)
     const scoutDisabledReason = useScoutCreateDisabledReason()
@@ -25,12 +25,13 @@ export function InboxQuickSetupAction(): JSX.Element {
         minimumAccessLevel: TeamMembershipLevel.Member,
     })
 
-    useEffect(() => startSetup(), [startSetup])
     useEffect(() => {
         if (!restrictionReason && !scoutDisabledReason) {
             resumeQuickSetup()
         }
     }, [shouldResumeQuickSetup, resumeQuickSetup, restrictionReason, scoutDisabledReason])
+
+    const busy = saving || quickActivationPending
 
     return (
         <div className="flex w-full flex-col items-start gap-3">
@@ -39,12 +40,8 @@ export function InboxQuickSetupAction(): JSX.Element {
                     type="primary"
                     status="alt"
                     onClick={() => activateQuickSetup()}
-                    loading={saving}
-                    disabledReason={
-                        restrictionReason ||
-                        scoutDisabledReason ||
-                        (!quickSetupReady ? 'Loading your available sources and general scout' : undefined)
-                    }
+                    loading={busy}
+                    disabledReason={restrictionReason || scoutDisabledReason}
                     data-attr="inbox-quick-activate"
                 >
                     Activate Self-Driving
@@ -73,11 +70,11 @@ export function InboxQuickSetupAction(): JSX.Element {
                         onClick={
                             failedOperation === 'scouts' || failedOperation === 'sources'
                                 ? retry
-                                : quickSetupReady
+                                : hasGithubIntegration
                                   ? () => activateQuickSetup('retry')
                                   : startSetup
                         }
-                        loading={saving}
+                        loading={busy}
                         disabledReason={restrictionReason || scoutDisabledReason}
                     >
                         Retry
