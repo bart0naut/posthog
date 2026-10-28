@@ -124,6 +124,7 @@ export function setupSources(
 export function newInboxSetupDraft(sources: InboxSetupSource[], scannerIds: string[]): InboxOnboardingDraftApi {
     return {
         step: 'signals',
+        setup_mode: 'guided',
         sources: sources.filter((source) => source.available).flatMap((source) => source.sources),
         scanner_ids: scannerIds,
         suggestions: [],

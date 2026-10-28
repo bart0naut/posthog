@@ -199,20 +199,25 @@ class TestInboxOnboarding(APIBaseTest):
 
     @parameterized.expand(
         [
-            (None, False, None),
-            ("control", False, None),
-            ("test-ui", False, None),
-            ("test-ui", False, "test-sol"),
-            ("test-ui", False, "control"),
-            ("test-github", False, None),
-            ("test-github", True, "test-sol"),
+            (None, False, None, None),
+            ("control", False, None, None),
+            ("control", False, None, "quick"),
+            ("test-ui", False, None, None),
+            ("test-ui", False, "test-sol", None),
+            ("test-ui", False, "control", None),
+            ("test-github", False, None, None),
+            ("test-github", False, None, "guided"),
+            ("test-github", True, "test-sol", None),
         ]
     )
     def test_completion_is_durable_and_retry_safe(
-        self, variant: str | None, automatic_implementation: bool, arm: str | None
+        self, variant: str | None, automatic_implementation: bool, arm: str | None, setup_mode: str | None
     ) -> None:
         self.draft["automatic_implementation"] = automatic_implementation
-        if variant == "test-github" and automatic_implementation:
+        if setup_mode:
+            self.draft["setup_mode"] = setup_mode
+        has_scout = variant == "test-github" and automatic_implementation
+        if has_scout:
             self.draft["suggestions"] = [self.suggestion]
             SignalScoutConfig.objects.create(team=self.team, skill_name=self.scout_skill_name, enabled=True, emit=True)
         config = SignalTeamConfig.objects.get(team=self.team)
@@ -269,14 +274,12 @@ class TestInboxOnboarding(APIBaseTest):
             "project_id": self.team.id,
             "flow_version": "ui-first-v1",
             "inbox_client": "cloud",
-            "setup_mode": "quick" if variant == "test-github" else "guided",
+            "setup_mode": setup_mode or ("quick" if variant == "test-github" else "guided"),
             "self_driving_ubp": not automatic_implementation,
             "automatic_implementation": automatic_implementation,
             "implementation_priority": "P1",
-            "enabled_source_products": ["error_tracking", "signals_scout"]
-            if self.draft["suggestions"]
-            else ["error_tracking"],
-            "scout_count": len(self.draft["suggestions"]),
+            "enabled_source_products": ["error_tracking", "signals_scout"] if has_scout else ["error_tracking"],
+            "scout_count": 1 if has_scout else 0,
         }
         assert (
             len(
